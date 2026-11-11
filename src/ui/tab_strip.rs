@@ -1954,8 +1954,7 @@ impl Tty7App {
         };
         let this = entity.read(cx);
         // Taken before `this` is let go for the Move to Group submenu below.
-        let sidebar =
-            cx.global::<Config>().tab_bar_position == crate::core::config::TabBarPosition::Left;
+        let sidebar = cx.global::<Config>().tabs_in_sidebar();
         let move_targets = sidebar.then(|| {
             let keys = this.sidebar_group_keys(cx);
             crate::ui::tab_sidebar::move_targets(&keys, &this.sidebar_groups, index)
@@ -2259,6 +2258,140 @@ impl Tty7App {
                     }
                 }),
             )
+    }
+
+    /// The tabs as tmux draws its window line: `1:title`, `2:title` in one
+    /// row, the current one marked `*` and filled. It is the same list the
+    /// chips show, with the same click and context-menu behaviour — only the
+    /// paint is the multiplexer's.
+    ///
+    /// The row is a `tab_bar_style` of its own rather than a skin on the
+    /// chips: tmux's line is a single text run with no card around each
+    /// tab, and pretending the chips are one never stops looking like chips.
+    pub(crate) fn tab_strip_tmux(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let active = self.active;
+        // tmux's line is one text row. The bar may be configured as low as
+        // 16 px, so the segment's own padding, type size, avatar and the +
+        // tile all shrink with it rather than insisting on a 30 px chip's
+        // geometry.
+        let bar_height = cx.global::<Config>().tab_bar_height.clamp(
+            crate::core::config::tab_bar_min_height(crate::core::config::TabBarStyle::Tmux),
+            crate::core::config::TAB_BAR_HEIGHT_MAX,
+        );
+        let inner = (bar_height - 4.).max(10.);
+        let text_px = inner.min(14.);
+        let edge = (bar_height * 0.15).clamp(2., 8.);
+        let mut segments = h_flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .gap(px(2.))
+            .overflow_hidden();
+        for i in 0..self.tabs.len() {
+            let tab = &self.tabs[i];
+            let is_active = i == active;
+            let label = self.tab_label(tab, i, Some(window), cx);
+            let agent = tab.agent(cx).or_else(|| tab.asleep_agent());
+            let status = tab.agent_status(cx);
+            let unread = tab.agent_unread_count(cx);
+            let ssh = self.tab_ssh_dot(tab, cx);
+            // Rename is an inline field, and the field lives in whichever
+            // surface draws the tab. The tmux line used to drop it on the
+            // floor: the rename state was set, but only the chip strip ever
+            // rendered the input, so the tab appeared not to rename at all.
+            let rename_input = self
+                .renaming
+                .as_ref()
+                .filter(|r| r.tab == tab.tree_id.get())
+                .map(|r| r.input.clone());
+            let renaming_here = rename_input.is_some();
+            let menu_app = cx.entity().downgrade();
+            let segment = h_flex()
+                .id(("tmux-tab", i))
+                .flex_shrink_0()
+                .min_w_0()
+                .h(px(inner))
+                .px(px(edge))
+                .gap(px((edge * 0.7).max(2.)))
+                .items_center()
+                .rounded(px(4.))
+                .text_size(px(text_px))
+                .line_height(px(text_px))
+                .cursor_pointer()
+                .when(is_active, |s| {
+                    s.bg(cx.theme().primary)
+                        .text_color(cx.theme().primary_foreground)
+                })
+                .when(!is_active, |s| {
+                    s.text_color(cx.theme().muted_foreground)
+                        .hover(|s| s.bg(cx.theme().muted))
+                })
+                // The press is held back the way a chip holds it; the release
+                // activates, so a press that becomes a drag never switches.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.activate(i, window, cx);
+                }))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .opacity(if is_active { 0.8 } else { 0.6 })
+                        .child(format!("{}:", i + 1)),
+                )
+                .when_some(rename_input, |s, input| {
+                    s.child(
+                        h_flex()
+                            .id(("tmux-tab-rename", i))
+                            .flex_1()
+                            .min_w(px(110.))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(|_, _, cx| cx.stop_propagation())
+                            .child(Input::new(&input).appearance(false).px_0()),
+                    )
+                })
+                .when(!renaming_here, |s| {
+                    s.child(div().min_w_0().truncate().child(label))
+                })
+                .when(is_active && !renaming_here, |s| {
+                    s.child(div().flex_shrink_0().child("*"))
+                })
+                .when_some(agent, |s, agent| {
+                    s.child(self.tab_avatar(
+                        ("tmux-avatar", i),
+                        Some(agent),
+                        status,
+                        unread,
+                        ssh,
+                        inner.min(16.),
+                        cx,
+                    ))
+                })
+                .context_menu(move |menu, window, cx| {
+                    Self::tab_context_menu(menu, i, false, &menu_app, window, cx)
+                });
+            segments = segments.child(segment);
+        }
+        // Below a chip's height the 32 px new-tab tile would be taller than
+        // the bar; a one-row tmux line has no room for it, and New Tab is a
+        // keypress away.
+        let add = (bar_height >= 24.).then(|| {
+            div().flex_shrink_0().child(self.new_tab_button_sized(
+                "tmux-tab-add",
+                inner.min(24.).max(18.),
+                cx,
+            ))
+        });
+        h_flex()
+            .id("tmux-tab-strip")
+            .w_full()
+            .h_full()
+            .items_center()
+            .gap(px(edge.max(3.)))
+            .px(px(edge))
+            .child(segments)
+            .children(add)
+            .into_any_element()
     }
 
     pub(crate) fn tab_strip(

@@ -7,7 +7,7 @@ use tty7_core::core::session::WorkspaceId;
 use uuid::Uuid;
 
 use crate::core::cli_agent::{AgentStatus, CLIAgent};
-use crate::core::config::{Config, RightPanelTab, TabBarPosition};
+use crate::core::config::{Config, RightPanelTab};
 use crate::ui::i18n::{L10nKey, alias_translations, t, t_fmt};
 
 /// Everything a row can do once it is picked. `Tty7App::run_command` is the
@@ -628,7 +628,7 @@ impl Item {
     pub fn actions(cx: &App, chrome: ChromeState) -> Vec<Item> {
         use CommandKind::*;
         let cfg = cx.global::<Config>();
-        let tab_bar_left = cfg.tab_bar_position == TabBarPosition::Left;
+        let tab_bar_left = cfg.tabs_in_sidebar();
         let sidebar_hidden = chrome.rail_collapsed || !tab_bar_left;
         let right_panel_open = chrome.right_panel_visible;
         let document_filled = chrome.document_filled;

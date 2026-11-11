@@ -321,6 +321,7 @@ impl Tty7App {
         });
         let font_size = self.font_size;
         let line_height = self.line_height;
+        let terminal_padding = cfg.terminal_padding;
         let ui_font_size = self.ui_font_size(cx);
 
         let font_family_control = self.font_dropdown(
@@ -366,6 +367,18 @@ impl Tty7App {
             (line_height > LINE_HEIGHT_MIN, line_height < LINE_HEIGHT_MAX),
             cx,
             |this, dir, cx| this.change_line_height(dir * LINE_HEIGHT_STEP, cx),
+        );
+        let padding_steps = [0., 4., 8., 12., 16.];
+        let padding_idx = padding_steps
+            .iter()
+            .position(|step| (terminal_padding - step).abs() < 0.01);
+        let padding_control = self.settings_choice_valued(
+            "terminal-padding",
+            &["0 px", "4 px", "8 px", "12 px", "16 px"],
+            padding_idx,
+            Some(format!("{terminal_padding:.0} px")),
+            cx,
+            move |this, ix, _w, cx| this.set_terminal_padding(padding_steps[ix], cx),
         );
         let ui_font_size_control = self.stepper_control(
             "ui-font-size",
@@ -467,6 +480,13 @@ impl Tty7App {
                         t(L10nKey::SettingsLineHeight),
                         t(L10nKey::SettingsLineHeightDesc),
                         line_height_control,
+                        cx,
+                    )
+                    .into_any_element(),
+                    self.settings_row(
+                        t(L10nKey::SettingsTerminalPadding),
+                        t(L10nKey::SettingsTerminalPaddingDesc),
+                        padding_control,
                         cx,
                     )
                     .into_any_element(),
@@ -1395,10 +1415,19 @@ impl Tty7App {
             NewTabPosition::AfterCurrent => 0,
             NewTabPosition::End => 1,
         };
+        let tmux_tabs = cfg.tab_bar_style == crate::core::config::TabBarStyle::Tmux;
+        // tmux's window line is horizontal, so it offers the two ends only.
+        // The classic style keeps its left rail as well.
         let tab_bar_idx = match cfg.tab_bar_position {
             TabBarPosition::Top => 0,
-            TabBarPosition::Left => 1,
+            TabBarPosition::Bottom => 1,
+            // The tmux line has no left form, and is drawn at the top; the
+            // choice has to show what is actually on screen.
+            TabBarPosition::Left if tmux_tabs => 0,
+            TabBarPosition::Left => 2,
         };
+        let tab_bar_style_idx = usize::from(tmux_tabs);
+        let tab_bar_height = cfg.tab_bar_height;
         let sidebar_auto_grouping = cfg.sidebar_auto_grouping;
         let confirm_idx = match cfg.confirm_close {
             ConfirmClose::Never => 0,
@@ -1439,21 +1468,68 @@ impl Tty7App {
                 );
             },
         );
+        let position_labels: Vec<&'static str> = match tmux_tabs {
+            true => vec![t(L10nKey::SettingsTop), t(L10nKey::SettingsBottom)],
+            false => vec![
+                t(L10nKey::SettingsTop),
+                t(L10nKey::SettingsBottom),
+                t(L10nKey::SettingsLeft),
+            ],
+        };
         let tab_bar = self.settings_choice(
             "wt-tab-bar-pos",
-            &[t(L10nKey::SettingsTop), t(L10nKey::SettingsLeft)],
+            &position_labels,
             tab_bar_idx,
             cx,
+            move |this, ix, _w, cx| {
+                let pos = match (tmux_tabs, ix) {
+                    (true, 0) => TabBarPosition::Top,
+                    (true, _) => TabBarPosition::Bottom,
+                    (false, 0) => TabBarPosition::Top,
+                    (false, 1) => TabBarPosition::Bottom,
+                    (false, _) => TabBarPosition::Left,
+                };
+                this.set_tab_bar_position(pos, cx);
+            },
+        );
+        let tab_bar_style = self.settings_choice(
+            "wt-tab-bar-style",
+            &[t(L10nKey::SettingsDefault), "tmux"],
+            tab_bar_style_idx,
+            cx,
             |this, ix, _w, cx| {
-                this.set_tab_bar_position(
-                    if ix == 0 {
-                        TabBarPosition::Top
-                    } else {
-                        TabBarPosition::Left
+                this.set_tab_bar_style(
+                    match ix {
+                        0 => crate::core::config::TabBarStyle::Standard,
+                        _ => crate::core::config::TabBarStyle::Tmux,
                     },
                     cx,
                 );
             },
+        );
+        // The tmux line may sit at one text row's height; chips need room for
+        // the 30 px card, so the standard style keeps the larger floor.
+        let height_steps: Vec<f32> = match tmux_tabs {
+            true => vec![
+                16., 18., 20., 22., 24., 28., 32., 36., 40., 44., 48., 56., 64., 72.,
+            ],
+            false => vec![32., 36., 40., 44., 48., 56., 64., 72.],
+        };
+        let height_labels: Vec<String> = height_steps
+            .iter()
+            .map(|step| format!("{step:.0} px"))
+            .collect();
+        let height_labels: Vec<&str> = height_labels.iter().map(String::as_str).collect();
+        let height_idx = height_steps
+            .iter()
+            .position(|step| (tab_bar_height - step).abs() < 0.01);
+        let tab_bar_height_control = self.settings_choice_valued(
+            "wt-tab-bar-height",
+            &height_labels,
+            height_idx,
+            Some(format!("{tab_bar_height:.0} px")),
+            cx,
+            move |this, ix, _w, cx| this.set_tab_bar_height(height_steps[ix], cx),
         );
         let grouping = self.settings_switch(
             "wt-sidebar-auto-grouping",
@@ -1472,9 +1548,21 @@ impl Tty7App {
                     cx,
                 ),
                 self.settings_row(
+                    t(L10nKey::SettingsTabBarStyle),
+                    t(L10nKey::SettingsTabBarStyleDesc),
+                    tab_bar_style,
+                    cx,
+                ),
+                self.settings_row(
                     t(L10nKey::SettingsTabBarPosition),
                     t(L10nKey::SettingsTabBarPositionDesc),
                     tab_bar,
+                    cx,
+                ),
+                self.settings_row(
+                    t(L10nKey::SettingsTabBarHeight),
+                    t(L10nKey::SettingsTabBarHeightDesc),
+                    tab_bar_height_control,
                     cx,
                 ),
                 self.settings_row(

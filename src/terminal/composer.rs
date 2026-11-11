@@ -41,7 +41,7 @@ use gpui_component::input::{self, Input, InputEvent, InputState, RopeExt as _};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, Icon, IconName, Sizable as _, Size, h_flex};
 
-use super::view::{GRID_PAD_X, GRID_PAD_Y, TerminalView, pasted_paths_text, types_cleanly};
+use super::view::{TerminalView, pasted_paths_text, types_cleanly};
 use crate::core::cli_agent::{AgentStatus, CLIAgent};
 use crate::core::shell_quote::{Quoting, quoting_for};
 use crate::ui::host_ops::{Host, HostId, HostOps};
@@ -2298,7 +2298,7 @@ impl TerminalView {
             frame + px(BOX_INSET),
             self.line_height,
             c.area_rows,
-            self.grid_slack + px(GRID_PAD_Y),
+            self.grid_slack + px(self.grid_pad_y),
         )
     }
 
@@ -3061,7 +3061,9 @@ impl TerminalView {
                 // part of a row the grid's height left over, the rows the
                 // grid gave up for the box, then the input's rows.
                 .min_h(
-                    self.line_height * (rows + reserved) as f32 + self.grid_slack + px(GRID_PAD_Y),
+                    self.line_height * (rows + reserved) as f32
+                        + self.grid_slack
+                        + px(self.grid_pad_y),
                 )
                 .flex()
                 .flex_col()
@@ -3078,12 +3080,12 @@ impl TerminalView {
                             div()
                                 .absolute()
                                 .top_0()
-                                .left(px(GRID_PAD_X))
+                                .left(px(self.grid_pad_x))
                                 .w(width)
                                 .bottom(
                                     self.line_height * reserved as f32
                                         + self.grid_slack
-                                        + px(GRID_PAD_Y),
+                                        + px(self.grid_pad_y),
                                 )
                                 .bg(rgb_to_hsla(backdrop)),
                         )
@@ -3106,8 +3108,8 @@ impl TerminalView {
                 .w_full()
                 .pt(px(8.))
                 // The pane's own padding is already between it and the edges.
-                .px(px(BOX_INSET - GRID_PAD_X))
-                .pb(px(BOX_INSET - GRID_PAD_Y))
+                .px(px((BOX_INSET - self.grid_pad_x).max(0.)))
+                .pb(px((BOX_INSET - self.grid_pad_y).max(0.)))
                 .child(frame)
                 .into_any_element(),
         };

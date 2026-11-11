@@ -81,26 +81,72 @@ impl Tty7App {
             } else {
                 t(L10nKey::SettingsShortcutsHint)
             });
-        let prefix_row = tmux.then(|| {
-            h_flex()
-                .gap(px(10.))
-                .items_center()
+        // The leader is a chord, not one of two presets: record whatever the
+        // user presses. The same capture machinery as the rows below, sent to
+        // `prefix` by the sentinel instead of to a `keybindings` entry.
+        let leader_recording = recording
+            .as_ref()
+            .is_some_and(|(action, _)| action == crate::ui::keymap::LEADER_RECORDING);
+        let leader_spec = match (&recording, leader_recording) {
+            (Some((_, chords)), true) => chords.join(" "),
+            _ => prefix.clone(),
+        };
+        let leader_button = h_flex()
+            .id("kb-leader")
+            .role(gpui::Role::Button)
+            .aria_label(t(L10nKey::SettingsPrefix))
+            .h(px(26.))
+            .min_w(px(72.))
+            .px(px(8.))
+            .gap(px(5.))
+            .items_center()
+            .justify_end()
+            .rounded(px(6.))
+            .cursor_pointer()
+            .when(leader_recording, |b| {
+                b.bg(tk.page).shadow(vec![kit::ring(tk.fg, 1., true)])
+            })
+            .when(!leader_recording, |b| {
+                b.hover(|b| b.shadow(vec![kit::ring(tk.k15, 0.5, true)]))
+            })
+            .when(leader_recording && leader_spec.is_empty(), |b| {
+                b.child(
+                    div()
+                        .text_size(fs(12.))
+                        .text_color(tk.k45)
+                        .child(t(L10nKey::SettingsPressKeysShort)),
+                )
+            })
+            .children((!leader_spec.is_empty()).then(|| Self::keycap_row(&leader_spec, &tk)))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.start_recording_key(
+                    crate::ui::keymap::LEADER_RECORDING.to_string(),
+                    window,
+                    cx,
+                )
+            }));
+        let prefix_row = Some(
+            v_flex()
+                .gap(px(4.))
+                .child(
+                    h_flex()
+                        .gap(px(10.))
+                        .items_center()
+                        .child(
+                            div()
+                                .text_size(fs(12.))
+                                .text_color(tk.k5)
+                                .child(t(L10nKey::SettingsPrefix)),
+                        )
+                        .child(leader_button),
+                )
                 .child(
                     div()
                         .text_size(fs(12.))
-                        .text_color(tk.k5)
-                        .child(t(L10nKey::SettingsPrefix)),
-                )
-                .child(self.settings_choice(
-                    "kb-prefix",
-                    &["⌃B", "⌃A"],
-                    usize::from(prefix == "ctrl-a"),
-                    cx,
-                    |this, ix, _w, cx| {
-                        this.set_keybinding_prefix(if ix == 0 { "ctrl-b" } else { "ctrl-a" }, cx)
-                    },
-                ))
-        });
+                        .text_color(tk.k45)
+                        .child(t(L10nKey::SettingsPrefixNote)),
+                ),
+        );
         let intro = v_flex()
             .mt(px(-12.))
             .gap(px(10.))

@@ -57,6 +57,7 @@ actions!(
         SwapPanePrev,
         NextTab,
         PrevTab,
+        ActivateLastTab,
         SelectNextTab,
         SelectPrevTab,
         MoveTabLeft,

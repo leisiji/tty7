@@ -7,7 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The leader key is recordable, and the grid padding is adjustable.**
+  Settings → Keybindings records any chord as the leader instead of offering
+  only Ctrl+B / Ctrl+A (the `prefix` / `leader` config key still works), and
+  Settings → Appearance → Terminal padding sets the space around the grid.
+  Zero fills the pane edge-to-edge, including in fullscreen; the vertical
+  half is half the chosen value, as it always was. A rearrangeable pane also
+  gives up its grip strip at zero, so the grid starts at the very top. The
+  horizontal tab bar has its own **Tab bar height** setting. The classic
+  chips stop at 32 px; the tmux line may go down to 16 px — one text row,
+  as tmux draws it — and its labels, avatars and new-tab tile shrink to fit
+  (the tile is left out below 24 px). 48 px was too tall for that strip.
+
+- **Focus-follows-mouse waits for the pointer to move.** A keyboard pane
+  switch (Alt+P, or any focus command) no longer gets reverted by a synthetic
+  mouse-move at the unchanged pointer position; the keyboard only follows
+  the pointer after it has actually travelled.
+
+- **Alt+P and Alt+M, as in xterm-muxer.** Alt+P moves to the next pane in
+  the tab without the bracket chord, and Alt+M jumps straight back to the
+  previously used tab (a new `ActivateLastTab` action, distinct from the
+  strip-order `SelectPrevTab`). Both are ordinary keybindings and can be
+  rebound or moved onto the tmux leader.
+
+- **Copy mode: spell two letters, get the thing they mark.** `Ctrl+Shift+I`
+  (`Cmd+Shift+I` on macOS) scans the visible screen, labels every URL, path
+  and word with a two-letter tag, and copies the one you spell —
+  xterm-muxer's quick select, without the mouse. Esc or Ctrl+Shift+I again
+  closes it, Backspace widens the choice again, and the chord is a normal
+  keybinding (`ToggleCopyMode`), so the tmux leader and Settings both reach
+  it. The composer moves to `Ctrl+Alt+I` off macOS, where `Ctrl+Shift+I` used
+  to toggle it.
+
+- **A tmux-style tab bar.** `tab_bar_style: "tmux"` draws the tabs as the
+  multiplexer's window line — `1:title`, `2:title`, the current one starred —
+  instead of rounded chips or the left rail. `tab_bar_position` now also
+  accepts `"bottom"`, so the line can sit at either end of the window. Both
+  are in Settings → Tabs, and the context menus keep working on every segment.
+
+- **The terminal context menu's shortcuts are configurable.** Copy, Cut,
+  Paste, Select All, the four file-link commands, and the rest of the pane
+  menu are all in `keybindings` and on the Keybindings page, and the menu
+  prints the chord actually bound — including a tmux-style leader sequence
+  such as `Ctrl+B [` rather than a hard-coded platform chord. Any action can
+  use the leader by spelling it `"leader ["` in `keybindings` (or `leader` as
+  an alias for the `prefix` setting), and the tmux preset now maps
+  copy/paste/find/clear to `[`, `]`, `f` and `Shift+C`.
+
 ### Fixed
+
+- **SGR underlines are painted from the cell buffer.** Underlined text
+  (`ESC[4m`, and its curly variant) could go missing because the line rode
+  gpui's shaped-text run and its position was clipped by the cell box. Single
+  and curly underlines now use the same pixel-exact path as double, dotted
+  and dashed ones, so they survive every font, fallback face and DPI.
+
+- **Fullscreen puts the top status bar away.** With the tabs in the left rail
+  or along the bottom, F11 now hides the top row carrying Search Everywhere
+  and the window chrome, leaving the terminal the whole window. When the tabs
+  themselves are in that row it stays, since a mode that hides the way you
+  switch tabs is not immersive.
+
 
 - **An update no longer leaves pane shells off the local network on macOS** —
   The relaunched app asks the running server to hand itself over to the new

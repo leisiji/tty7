@@ -2211,8 +2211,7 @@ impl Tty7App {
         // tabs along the top there is nowhere to show one. Offered on a remote
         // workspace too, unlike the file manager above — the tree and a pinned
         // folder are both on the workspace's own host.
-        let groups_shown = cx.global::<crate::core::config::Config>().tab_bar_position
-            == crate::core::config::TabBarPosition::Left;
+        let groups_shown = cx.global::<crate::core::config::Config>().tabs_in_sidebar();
         let mut menu = menu.min_w(px(200.));
         let p = path.to_path_buf();
 

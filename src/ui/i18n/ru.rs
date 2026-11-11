@@ -27,7 +27,7 @@ pub fn translate_ru(key: L10nKey) -> Option<&'static str> {
             "Нажмите на сочетание и введите новые клавиши. Чтобы задать последовательность, сразу нажмите второе сочетание. Esc отменяет, ⌫ очищает."
         }
         L10nKey::SettingsShortcutsHintTmux => {
-            "Профиль tmux: команды панелей и вкладок вызываются через префикс. Нажмите на сочетание, чтобы изменить его. Esc отменяет, ⌫ очищает."
+            "Профиль tmux: команды панелей и вкладок вызываются через клавишу-лидер. В config.json любую команду можно задать как `leader c`. Нажмите на сочетание, чтобы изменить его. Esc отменяет, ⌫ очищает."
         }
         L10nKey::SettingsShortcutConflict => {
             "{keys} уже назначено команде «{action}». При замене сочетание будет снято с неё."
@@ -292,6 +292,10 @@ pub fn translate_ru(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsUiFontFamily => "Шрифт интерфейса",
         L10nKey::SettingsUiFontFamilyDesc => "Для вкладок, боковых панелей, диалогов и настроек.",
         L10nKey::SettingsLineHeight => "Высота строки",
+        L10nKey::SettingsTerminalPadding => "Отступ терминала",
+        L10nKey::SettingsTerminalPaddingDesc => {
+            "Поля вокруг сетки. Ноль заполняет панель целиком, в том числе в полноэкранном режиме."
+        }
         L10nKey::SettingsLineHeightDesc => "Межстрочный интервал относительно размера шрифта.",
         L10nKey::SettingsFontFamily => "Шрифт терминала",
         L10nKey::SettingsFontFamilyDesc => "Выбор из установленных в системе шрифтов.",
@@ -800,8 +804,16 @@ pub fn translate_ru(key: L10nKey) -> Option<&'static str> {
         L10nKey::ConfirmCloseNever => "Никогда",
         L10nKey::ConfirmCloseWhenBusy => "Если что-то запущено",
         L10nKey::ConfirmCloseAlways => "Всегда",
+        L10nKey::SettingsTabBarStyle => "Стиль панели вкладок",
+        L10nKey::SettingsTabBarStyleDesc => {
+            "Скруглённые вкладки и левая панель или строка в стиле tmux."
+        }
+        L10nKey::SettingsTabBarHeight => "Высота панели вкладок",
+        L10nKey::SettingsTabBarHeightDesc => {
+            "Высота горизонтальной панели, когда вкладки сверху или снизу."
+        }
         L10nKey::SettingsTabBarPosition => "Положение вкладок",
-        L10nKey::SettingsTabBarPositionDesc => "Полоса сверху или боковая панель слева.",
+        L10nKey::SettingsTabBarPositionDesc => "Сверху, снизу или боковая панель слева.",
         L10nKey::SettingsSidebarGrouping => "Автогруппировка",
         L10nKey::SettingsSidebarGroupingDesc => {
             "Группировать незакреплённые вкладки по репозиторию Git, SSH-вкладки по хосту."
@@ -828,19 +840,20 @@ pub fn translate_ru(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsAfterCurrent => "После текущей",
         L10nKey::SettingsAtEnd => "В конце",
         L10nKey::SettingsTop => "Сверху",
+        L10nKey::SettingsBottom => "Снизу",
         L10nKey::SettingsLeft => "Слева",
         L10nKey::SettingsPreset => "Профиль",
         L10nKey::SettingsPresetDesc => {
             "В tmux команды панелей и вкладок используют префикс (Ctrl-B C)."
         }
-        L10nKey::SettingsPrefix => "Префикс",
+        L10nKey::SettingsPrefix => "Клавиша-лидер",
         L10nKey::SettingsPressKeys => "Нажмите клавиши… · ⌫ снимает сочетание",
         L10nKey::SettingsPauseToSaveEsc => "пауза сохраняет · Esc",
         L10nKey::SettingsKeybindingsIntroDesc => {
             "Нажмите на сочетание и введите новые клавиши. Для последовательности вроде Ctrl-B X нажимайте клавиши подряд. Esc отменяет, Backspace очищает."
         }
         L10nKey::SettingsPrefixNote => {
-            "Одиночная клавиша префикса передаётся оболочке примерно через 1 с."
+            "Нажмите на лидер, чтобы записать любое сочетание, затем нажмите его перед клавишей действия. Одиночный лидер передаётся оболочке примерно через 1 с."
         }
         L10nKey::SettingsRestoreAllDefaults => "Сбросить все сочетания",
         L10nKey::SettingsRestoreAllDefaultsBody => {
@@ -1107,6 +1120,9 @@ pub fn translate_ru(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsSearchLineHeightKeywords => {
             "шрифт интервал строки typography leading spacing"
         }
+        L10nKey::SettingsSearchTerminalPaddingKeywords => {
+            "отступ поля край заполнить полный экран padding margin inset gap fullscreen"
+        }
         L10nKey::SettingsSearchUiFontFamilyKeywords => {
             "интерфейс шрифт семейство боковая панель вкладка interface font family ui typeface typography chrome sidebar tab"
         }
@@ -1215,8 +1231,14 @@ pub fn translate_ru(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsSearchPromptEditorKeywords => {
             "приглашение редактор оболочка ввод строка сочетания вставка prompt editor native shell input line editor zle readline fish keybindings ime paste"
         }
+        L10nKey::SettingsSearchTabBarStyleKeywords => {
+            "вкладки tmux стиль строка состояния панель tab bar style status line"
+        }
+        L10nKey::SettingsSearchTabBarHeightKeywords => {
+            "вкладки высота размер сверху снизу панель tab bar height size strip"
+        }
         L10nKey::SettingsSearchTabBarPositionKeywords => {
-            "вкладки вертикально боковая панель слева сверху расположение tabs vertical sidebar left top layout rail"
+            "вкладки вертикально боковая панель слева сверху снизу расположение tabs vertical sidebar left top bottom layout rail"
         }
         L10nKey::SettingsSearchTabCompletionKeywords => {
             "дополнение меню предложения приглашение complete completion menu suggestions tab prompt"
@@ -2013,6 +2035,7 @@ pub fn translate_ru(key: L10nKey) -> Option<&'static str> {
         L10nKey::CmdMoveTabRight => "Переместить вкладку вправо",
         L10nKey::CmdRecentTabSwitcher => "Недавние вкладки",
         L10nKey::CmdRecentTabSwitcherReverse => "Недавние вкладки (назад)",
+        L10nKey::CmdActivateLastTab => "Предыдущая вкладка (последняя использованная)",
         L10nKey::CmdCopyWorkingDirectory => "Копировать рабочую папку",
         L10nKey::CmdCopySessionId => "Копировать ID сеанса",
         L10nKey::CmdCopySessionIdSubtitle => "ID сеанса самого агента",
@@ -2123,6 +2146,10 @@ pub fn translate_ru(key: L10nKey) -> Option<&'static str> {
         L10nKey::CmdFindNext => "Найти следующее",
         L10nKey::CmdFindPrevious => "Найти предыдущее",
         L10nKey::CmdCopy => "Копировать",
+        L10nKey::CmdCopyMode => "Режим копирования",
+        L10nKey::CopyModeHint => "Введите 2 буквы, чтобы скопировать · Esc отменяет",
+        L10nKey::CopyModeHintTyped => "«{prefix}» — введите вторую букву · Esc отменяет",
+        L10nKey::CopyModeNoMatches => "На экране нечего копировать · Esc отменяет",
         L10nKey::CmdCut => "Вырезать",
         L10nKey::CmdPaste => "Вставить",
         L10nKey::CmdAlternatePaste => "Вставить (вне полноэкранных приложений)",

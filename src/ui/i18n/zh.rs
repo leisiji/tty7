@@ -25,7 +25,7 @@ pub fn translate_zh(key: L10nKey) -> Option<&'static str> {
             "点击快捷键后按下新组合键；紧接着再按一组即可组成序列。Esc 取消，⌫ 清除。"
         }
         L10nKey::SettingsShortcutsHintTmux => {
-            "tmux 预设：窗格与标签页操作使用前缀键。点击快捷键即可修改；Esc 取消，⌫ 清除。"
+            "tmux 预设：窗格与标签页操作使用 Leader 键。在 config.json 中可用 `leader c` 为任意操作绑定。点击快捷键即可修改；Esc 取消，⌫ 清除。"
         }
         L10nKey::SettingsShortcutConflict => "{keys} 已被“{action}”使用，替换后将从那里移除。",
         L10nKey::SettingsReplace => "替换",
@@ -260,6 +260,10 @@ pub fn translate_zh(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsUiFontFamily => "界面字体",
         L10nKey::SettingsUiFontFamilyDesc => "用于标签页、侧栏、弹窗和设置。",
         L10nKey::SettingsLineHeight => "行高",
+        L10nKey::SettingsTerminalPadding => "终端内边距",
+        L10nKey::SettingsTerminalPaddingDesc => {
+            "终端内容与窗格边缘之间的间距。设为 0 可铺满窗格，全屏时尤其明显。"
+        }
         L10nKey::SettingsLineHeightDesc => "行间距为字号的倍数。",
         L10nKey::SettingsFontFamily => "终端字体",
         L10nKey::SettingsFontFamilyDesc => "从系统已安装的字体中选择。",
@@ -650,8 +654,12 @@ pub fn translate_zh(key: L10nKey) -> Option<&'static str> {
         L10nKey::ConfirmCloseNever => "从不",
         L10nKey::ConfirmCloseWhenBusy => "有程序在运行时",
         L10nKey::ConfirmCloseAlways => "总是",
+        L10nKey::SettingsTabBarStyle => "标签栏样式",
+        L10nKey::SettingsTabBarStyleDesc => "圆角标签与左侧栏，或 tmux 风格的文本状态栏。",
+        L10nKey::SettingsTabBarHeight => "标签栏高度",
+        L10nKey::SettingsTabBarHeightDesc => "标签在顶部或底部时，横向标签栏的高度。",
         L10nKey::SettingsTabBarPosition => "标签栏位置",
-        L10nKey::SettingsTabBarPositionDesc => "将标签页显示为顶部横向条或左侧垂直侧栏。",
+        L10nKey::SettingsTabBarPositionDesc => "顶部、底部，或左侧垂直侧栏。",
         L10nKey::SettingsSidebarGrouping => "自动分组",
         L10nKey::SettingsSidebarGroupingDesc => {
             "未固定的标签页按 git 仓库分组，SSH 标签页按主机分组。"
@@ -674,16 +682,19 @@ pub fn translate_zh(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsAfterCurrent => "当前之后",
         L10nKey::SettingsAtEnd => "末尾",
         L10nKey::SettingsTop => "顶部",
+        L10nKey::SettingsBottom => "底部",
         L10nKey::SettingsLeft => "左侧",
         L10nKey::SettingsPreset => "预设",
         L10nKey::SettingsPresetDesc => "tmux 预设把操作映射为前缀键（如 Ctrl-B C）。",
-        L10nKey::SettingsPrefix => "前缀",
+        L10nKey::SettingsPrefix => "Leader 键",
         L10nKey::SettingsPressKeys => "按下按键… · ⌫ 表示不设快捷键",
         L10nKey::SettingsPauseToSaveEsc => "暂停以保存 · Esc",
         L10nKey::SettingsKeybindingsIntroDesc => {
             "点击快捷键后按新按键，连按可组成序列（如 Ctrl-B X）。Esc 取消，Backspace 清除。"
         }
-        L10nKey::SettingsPrefixNote => "单独按前缀键，约 1 秒后传给 shell。",
+        L10nKey::SettingsPrefixNote => {
+            "点击 Leader 键可录制任意组合键；先按它，再按对应操作的键。单独按 Leader 键约 1 秒后传给 shell。"
+        }
         L10nKey::SettingsRestoreAllDefaults => "恢复全部默认值",
         L10nKey::SettingsRestoreAllDefaultsBody => "你改过的每一个按键都会退回默认值，且无法撤销。",
         L10nKey::KeybindGoToTab => "跳到第 {n} 个标签页",
@@ -910,6 +921,9 @@ pub fn translate_zh(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsSearchLineHeightKeywords => {
             "行高 行间距 行距 typography line height spacing leading"
         }
+        L10nKey::SettingsSearchTerminalPaddingKeywords => {
+            "内边距 边距 间距 留白 边缘 全屏 铺满 padding margin gap fullscreen"
+        }
         L10nKey::SettingsSearchUiFontFamilyKeywords => {
             "界面 字体族 UI 字体 标签页 侧栏 interface font family ui typeface"
         }
@@ -1032,8 +1046,14 @@ pub fn translate_zh(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsSearchPromptEditorKeywords => {
             "提示符编辑器 提示符 编辑器 原生输入 行编辑 键位 快捷键 输入法 粘贴 prompt editor native shell input zle readline"
         }
+        L10nKey::SettingsSearchTabBarStyleKeywords => {
+            "标签栏样式 tmux 状态栏 文本 标签 tab bar style status line"
+        }
+        L10nKey::SettingsSearchTabBarHeightKeywords => {
+            "标签栏高度 高度 太高 变矮 尺寸 顶部 底部 tab bar height size strip"
+        }
         L10nKey::SettingsSearchTabBarPositionKeywords => {
-            "标签栏位置 标签栏 侧边栏 左侧 顶部 布局 tab bar position tabs sidebar left top"
+            "标签栏位置 标签栏 侧边栏 左侧 顶部 底部 布局 tab bar position tabs sidebar left top bottom"
         }
         L10nKey::SettingsSearchTabCompletionKeywords => {
             "Tab补全 补全 菜单 建议 tab completion suggestions prompt"
@@ -1662,6 +1682,7 @@ pub fn translate_zh(key: L10nKey) -> Option<&'static str> {
         L10nKey::CmdMoveTabRight => "标签页右移",
         L10nKey::CmdRecentTabSwitcher => "最近标签页切换器",
         L10nKey::CmdRecentTabSwitcherReverse => "最近标签页切换器（反向）",
+        L10nKey::CmdActivateLastTab => "上一个标签页（上次使用）",
         L10nKey::CmdCopyWorkingDirectory => "复制工作目录",
         L10nKey::CmdCopySessionId => "复制会话 ID",
         L10nKey::CmdCopySessionIdSubtitle => "编码 agent 自身的会话 ID",
@@ -1764,6 +1785,10 @@ pub fn translate_zh(key: L10nKey) -> Option<&'static str> {
         L10nKey::CmdFindNext => "查找下一个",
         L10nKey::CmdFindPrevious => "查找上一个",
         L10nKey::CmdCopy => "复制",
+        L10nKey::CmdCopyMode => "复制模式",
+        L10nKey::CopyModeHint => "输入 2 个字母以复制 · Esc 取消",
+        L10nKey::CopyModeHintTyped => "“{prefix}” — 再输入第二个字母 · Esc 取消",
+        L10nKey::CopyModeNoMatches => "屏幕上没有可复制的内容 · Esc 取消",
         L10nKey::CmdCut => "剪切",
         L10nKey::CmdPaste => "粘贴",
         L10nKey::CmdAlternatePaste => "粘贴（全屏程序中除外）",

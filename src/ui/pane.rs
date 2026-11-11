@@ -133,6 +133,10 @@ pub(crate) struct PaneChrome {
     /// The pane being dragged, drawn faded where it came from.
     pub lifted: Option<gpui::EntityId>,
     pub drag: crate::ui::pane_drag::PaneDragState,
+    /// The strip kept clear above a rearrangeable pane for its grip. Zero
+    /// when the terminal's own padding is zero: "fill the pane" has to mean
+    /// the whole pane, and the grip's target may hang over the first row.
+    pub grip_strip: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1047,9 +1051,7 @@ impl Pane<PaneSlot> {
                     .size_full()
                     .relative()
                     .overflow_hidden()
-                    .when(chrome.rearrangeable, |d| {
-                        d.pt(px(crate::ui::pane_drag::HANDLE_STRIP))
-                    })
+                    .when(chrome.rearrangeable, |d| d.pt(px(chrome.grip_strip)))
                     .map(|d| match v {
                         PaneSlot::Ready(t) => {
                             t.update(cx, |v, _cx| v.set_dim(dim));

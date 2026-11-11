@@ -405,6 +405,11 @@ fn settings_search_entries() -> &'static [SearchEntry] {
         },
         SearchEntry {
             section: Appearance,
+            title: SettingsTerminalPadding,
+            keywords: SettingsSearchTerminalPaddingKeywords,
+        },
+        SearchEntry {
+            section: Appearance,
             title: SettingsFontFamily,
             keywords: SettingsSearchFontFamilyKeywords,
         },
@@ -722,8 +727,18 @@ fn settings_search_entries() -> &'static [SearchEntry] {
         },
         SearchEntry {
             section: General,
+            title: SettingsTabBarStyle,
+            keywords: SettingsSearchTabBarStyleKeywords,
+        },
+        SearchEntry {
+            section: General,
             title: SettingsTabBarPosition,
             keywords: SettingsSearchTabBarPositionKeywords,
+        },
+        SearchEntry {
+            section: General,
+            title: SettingsTabBarHeight,
+            keywords: SettingsSearchTabBarHeightKeywords,
         },
         SearchEntry {
             section: General,
@@ -851,7 +866,9 @@ impl SearchEntry {
             L10nKey::SettingsScrollback => "scrollback_limit",
             L10nKey::SettingsNewTabPosition => "new_tab_position",
             L10nKey::SettingsConfirmClose => "confirm_close",
+            L10nKey::SettingsTabBarStyle => "tab_bar_style",
             L10nKey::SettingsTabBarPosition => "tab_bar_position",
+            L10nKey::SettingsTabBarHeight => "tab_bar_height",
             L10nKey::SettingsSidebarGrouping => "sidebar_auto_grouping",
             L10nKey::SettingsEditorGitGutter => "editor_git_gutter",
             L10nKey::SettingsEditorLsp => "editor_lsp",
@@ -895,6 +912,7 @@ impl SearchEntry {
             L10nKey::SettingsFontSize => "font_size",
             L10nKey::SettingsUiFontSize => "ui_font_size",
             L10nKey::SettingsLineHeight => "line_height",
+            L10nKey::SettingsTerminalPadding => "terminal_padding",
             L10nKey::SettingsFontFamily => "font_family",
             L10nKey::SettingsBoldFont => "font_family_bold",
             L10nKey::SettingsItalicFont => "font_family_italic",
@@ -936,6 +954,7 @@ impl SearchEntry {
             L10nKey::SettingsFontSize => t(L10nKey::SettingsFontSizeDesc),
             L10nKey::SettingsUiFontFamily => t(L10nKey::SettingsUiFontFamilyDesc),
             L10nKey::SettingsLineHeight => t(L10nKey::SettingsLineHeightDesc),
+            L10nKey::SettingsTerminalPadding => t(L10nKey::SettingsTerminalPaddingDesc),
             L10nKey::SettingsFontFamily => t(L10nKey::SettingsFontFamilyDesc),
             L10nKey::SettingsBoldFont => t(L10nKey::SettingsBoldFontDesc),
             L10nKey::SettingsItalicFont => t(L10nKey::SettingsItalicFontDesc),
@@ -971,7 +990,9 @@ impl SearchEntry {
             L10nKey::SettingsShowTrayIcon => t(L10nKey::SettingsShowTrayIconDesc),
             L10nKey::SettingsNewTabPosition => t(L10nKey::SettingsNewTabPositionDesc),
             L10nKey::SettingsConfirmClose => t(L10nKey::SettingsConfirmCloseDesc),
+            L10nKey::SettingsTabBarStyle => t(L10nKey::SettingsTabBarStyleDesc),
             L10nKey::SettingsTabBarPosition => t(L10nKey::SettingsTabBarPositionDesc),
+            L10nKey::SettingsTabBarHeight => t(L10nKey::SettingsTabBarHeightDesc),
             L10nKey::SettingsSidebarGrouping => t(L10nKey::SettingsSidebarGroupingDesc),
             L10nKey::SettingsEditorGitGutter => t(L10nKey::SettingsEditorGitGutterDesc),
             L10nKey::SettingsEditorLsp => t(L10nKey::SettingsEditorLspDesc),
@@ -1022,7 +1043,9 @@ impl SearchEntry {
             L10nKey::SettingsScrollback => cfg.scrollback_limit != defaults.scrollback_limit,
             L10nKey::SettingsNewTabPosition => cfg.new_tab_position != defaults.new_tab_position,
             L10nKey::SettingsConfirmClose => cfg.confirm_close != defaults.confirm_close,
+            L10nKey::SettingsTabBarStyle => cfg.tab_bar_style != defaults.tab_bar_style,
             L10nKey::SettingsTabBarPosition => cfg.tab_bar_position != defaults.tab_bar_position,
+            L10nKey::SettingsTabBarHeight => cfg.tab_bar_height != defaults.tab_bar_height,
             L10nKey::SettingsSidebarGrouping => {
                 cfg.sidebar_auto_grouping != defaults.sidebar_auto_grouping
             }
@@ -1088,6 +1111,7 @@ impl SearchEntry {
             L10nKey::SettingsFontSize => cfg.font_size != defaults.font_size,
             L10nKey::SettingsUiFontSize => cfg.ui_font_size != defaults.ui_font_size,
             L10nKey::SettingsLineHeight => cfg.line_height != defaults.line_height,
+            L10nKey::SettingsTerminalPadding => cfg.terminal_padding != defaults.terminal_padding,
             L10nKey::SettingsFontFamily => cfg.font_family != defaults.font_family,
             L10nKey::SettingsBoldFont => cfg.font_family_bold != defaults.font_family_bold,
             L10nKey::SettingsItalicFont => cfg.font_family_italic != defaults.font_family_italic,

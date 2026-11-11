@@ -10,7 +10,7 @@ use gpui::{
 };
 use gpui_component::kbd::Kbd;
 use gpui_component::menu::{ContextMenuExt, PopupMenuItem};
-use gpui_component::scroll::Scrollbar;
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::{ActiveTheme as _, Icon, IconName, WindowExt as _, h_flex};
 
 use super::TermSize;
@@ -120,6 +120,7 @@ actions!(
         PasteText,
         AlternatePaste,
         SelectAll,
+        ToggleCopyMode,
         UndoEdit,
         RedoEdit,
         FindInTerminal,
@@ -324,6 +325,12 @@ pub struct TerminalView {
     pub font_size: Pixels,
     pub line_height_mul: f32,
     pub cell_width: Pixels,
+    /// The padding this frame draws around the grid, from
+    /// `Config::terminal_padding`. Stored against the view so the scrollbar,
+    /// IME bar, completion menu and composer all use the same pair without
+    /// each threading `cx` through. Refreshed at the top of `render`.
+    pub(super) grid_pad_x: f32,
+    pub(super) grid_pad_y: f32,
     pub(super) line_height: Pixels,
     /// What the grid's height leaves under its last whole row: rows are
     /// drawn from the top, so this is empty space above the bottom padding.
@@ -392,6 +399,13 @@ pub struct TerminalView {
     /// candidate window at, while it had focus.
     ime_anchor: Option<gpui::Bounds<Pixels>>,
     last_hover_cell: Option<(usize, usize)>,
+    /// Where the pointer was on the last `MouseMoveEvent` this pane saw.
+    ///
+    /// Focus-follows-mouse may only move the keyboard when the pointer has
+    /// actually travelled. A keyboard pane switch (Alt+P) leaves the pointer
+    /// over the pane it was on, and a synthetic move at the same position —
+    /// a scroll, a layout pass, a window event — must not drag focus back.
+    pub(super) last_pointer_pos: Option<gpui::Point<Pixels>>,
     link_modifier_down: bool,
     /// What this pane's host has said about paths printed in it, for panes
     /// that cannot answer that from the local filesystem. Empty and unused on
@@ -408,6 +422,9 @@ pub struct TerminalView {
     /// deferred callback, one turn after the click — can still see the
     /// modifiers the user actually held.
     pub(super) context_menu_allowed: bool,
+    /// The labels over the visible screen while copy mode is open, and the
+    /// letters typed so far. `None` when the mode is closed.
+    copy_mode: Option<super::copy_mode::CopyModeState>,
     /// The file link the most recent right mouse-down landed on, latched for
     /// the same reason [`context_menu_allowed`](Self::context_menu_allowed)
     /// is: by the time the menu is built the pointer is only a memory.
@@ -1975,6 +1992,8 @@ impl TerminalView {
             font_size,
             line_height_mul,
             cell_width: px(8.),
+            grid_pad_x: GRID_PAD_X,
+            grid_pad_y: GRID_PAD_Y,
             line_height: px(17.),
             grid_slack: px(0.),
             grid_buf: Vec::new(),
@@ -2000,11 +2019,13 @@ impl TerminalView {
             ime_anchor: None,
             report_mouse,
             last_hover_cell: None,
+            last_pointer_pos: None,
             link_modifier_down: false,
             link_probes: Default::default(),
             link_repo_root: None,
             link_repo_root_pending: false,
             context_menu_allowed: true,
+            copy_mode: None,
             menu_link: None,
             scroll_debt: 0.,
             zoom_debt: 0.,
@@ -2732,6 +2753,15 @@ impl TerminalView {
         };
         let ks = reshaped.as_ref().unwrap_or(&ev.keystroke);
         let m = &ks.modifiers;
+
+        // Copy mode owns the keyboard while it is open. The entry chord still
+        // arrives as an action (it toggles the mode off); everything else is
+        // a label letter or a dismissal and must not reach the PTY.
+        if self.copy_mode.is_some() {
+            self.handle_copy_mode_key(ks, cx);
+            cx.stop_propagation();
+            return;
+        }
 
         if self.composer_focused {
             if ks.key == "escape" {
@@ -3491,6 +3521,185 @@ impl TerminalView {
         } else {
             self.select_all(cx);
         }
+    }
+
+    /// The visible screen as copy mode reads it: one entry per screen row,
+    /// with the terminal column of every character so a match's label can be
+    /// painted back over the same cells. Scrollback is included exactly as
+    /// far as the viewport shows it.
+    fn visible_copy_lines(&self) -> Vec<super::copy_mode::CopyLine> {
+        use alacritty_terminal::term::cell::Flags;
+
+        let term = self.terminal.term.lock();
+        let cols = term.columns();
+        let rows = term.screen_lines();
+        let offset = term.grid().display_offset() as i32;
+        let grid = term.grid();
+        (0..rows)
+            .map(|row| {
+                let line = Line(row as i32 - offset);
+                let mut text = String::new();
+                let mut columns = Vec::new();
+                for col in 0..cols {
+                    let cell = &grid[line][Column(col)];
+                    // A wide glyph is one character in the text but two cells
+                    // on the grid; its spacer must not become a second one.
+                    if cell
+                        .flags
+                        .intersects(Flags::LEADING_WIDE_CHAR_SPACER | Flags::WIDE_CHAR_SPACER)
+                    {
+                        continue;
+                    }
+                    text.push(if cell.c == '\0' { ' ' } else { cell.c });
+                    columns.push(col);
+                }
+                super::copy_mode::CopyLine { row, text, columns }
+            })
+            .collect()
+    }
+
+    /// Enter or leave the two-letter copy picker. Entering scans once, the
+    /// same way xterm-muxer's quick select scans the visible screen when it
+    /// opens; what the shell prints later does not move the labels under the
+    /// viewer's fingers.
+    pub(super) fn toggle_copy_mode(&mut self, cx: &mut Context<Self>) {
+        if self.copy_mode.take().is_some() {
+            cx.notify();
+            return;
+        }
+        if self.terminal.exited {
+            return;
+        }
+        let matches = super::copy_mode::find_matches(&self.visible_copy_lines());
+        self.copy_mode = Some(super::copy_mode::CopyModeState::new(matches));
+        cx.notify();
+    }
+
+    pub(super) fn exit_copy_mode(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.copy_mode.take().is_some() {
+            cx.notify();
+            return true;
+        }
+        false
+    }
+
+    /// A keystroke while copy mode is open. Everything is consumed: the mode
+    /// owns the keyboard until a label is spelled or it is dismissed, so no
+    /// letter leaks into the shell as a command.
+    fn handle_copy_mode_key(&mut self, ks: &gpui::Keystroke, cx: &mut Context<Self>) {
+        if ks.key == "escape" {
+            self.exit_copy_mode(cx);
+            return;
+        }
+        let Some(state) = self.copy_mode.as_mut() else {
+            return;
+        };
+        if ks.key == "backspace" {
+            state.backspace();
+            cx.notify();
+            return;
+        }
+        // Modifiers mean it is a chord, not a label letter. Leave the state
+        // alone; the action that carried it has already done its own work.
+        if ks.modifiers.control || ks.modifiers.alt || ks.modifiers.platform {
+            return;
+        }
+        let Some(ch) = ks.key.chars().next() else {
+            return;
+        };
+        let committed = match state.type_char(ch) {
+            super::copy_mode::CopyOutcome::Commit(index) => {
+                state.matches.get(index).map(|m| m.text.clone())
+            }
+            super::copy_mode::CopyOutcome::Pending | super::copy_mode::CopyOutcome::NoMatch => None,
+        };
+        match committed {
+            Some(text) => {
+                self.copy_mode = None;
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                cx.notify();
+            }
+            None => cx.notify(),
+        }
+    }
+
+    /// The labels, the outlined matches and the hint. Drawn over the grid,
+    /// below everything that menus and popups put on the surface.
+    fn render_copy_mode(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let state = self.copy_mode.as_ref()?;
+        let cell_w = self.cell_width;
+        let line_h = self.line_height;
+        let prefix = state.prefix.as_str();
+        let mut layer = div().absolute().top_0().left_0().size_full();
+        for m in &state.matches {
+            let dimmed = !prefix.is_empty() && !m.label.starts_with(prefix);
+            let x = px(self.grid_pad_x) + cell_w * (m.col as f32);
+            let y = px(self.grid_pad_y) + line_h * (m.row as f32);
+            let outline = match dimmed {
+                true => cx.theme().primary.opacity(0.12),
+                false => cx.theme().primary.opacity(0.45),
+            };
+            let badge_bg = match dimmed {
+                true => cx.theme().primary.opacity(0.18),
+                false => cx.theme().primary,
+            };
+            let badge_ink = match dimmed {
+                true => cx.theme().muted_foreground,
+                false => cx.theme().primary_foreground,
+            };
+            layer = layer
+                .child(
+                    div()
+                        .absolute()
+                        .left(x)
+                        .top(y)
+                        .w(cell_w * (m.width as f32))
+                        .h(line_h)
+                        .rounded(px(2.))
+                        .border_1()
+                        .border_color(outline),
+                )
+                .child(
+                    h_flex()
+                        .absolute()
+                        .left(x)
+                        .top(y)
+                        .h(line_h)
+                        .px(px(2.))
+                        .items_center()
+                        .rounded(px(3.))
+                        .bg(badge_bg)
+                        .text_color(badge_ink)
+                        .text_xs()
+                        .child(m.label.clone()),
+                );
+        }
+        let hint = super::copy_mode::hint_text(state);
+        let hud = h_flex()
+            .gap(px(8.))
+            .items_center()
+            .px(px(10.))
+            .h(px(26.))
+            .rounded(px(6.))
+            .bg(cx.theme().primary)
+            .text_color(cx.theme().primary_foreground)
+            .text_xs()
+            .child(t(L10nKey::CmdCopyMode))
+            .child(div().opacity(0.72).child(hint));
+        Some(
+            layer
+                .child(
+                    div()
+                        .absolute()
+                        .bottom(px(8.))
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .child(hud),
+                )
+                .into_any_element(),
+        )
     }
 
     pub fn paste(&mut self, text: String, cx: &mut Context<Self>) {
@@ -6580,15 +6789,20 @@ impl TerminalView {
     fn render_scrollbar(&self) -> impl IntoElement + use<> {
         div()
             .absolute()
-            .top(px(GRID_PAD_Y))
+            .top(px(self.grid_pad_y))
             .left_0()
             .right_0()
             .h(self.line_height * self.terminal.size().rows as f32)
-            // No `scrollbar_show` override: the bar takes `cx.theme()`'s, which
-            // `apply_theme` pins to `Scrolling` for every list in the app. A
-            // pane disagreeing with the sidebar about when a scrollbar is worth
-            // showing would be the odd one out.
-            .child(Scrollbar::vertical(&self.scroll_handle).id("terminal-scrollbar"))
+            // The terminal's bar floats over the grid: no track, and nothing
+            // painted until the pointer comes to it. The lists elsewhere keep
+            // the theme's `Scrolling` mode; a pane is the one place where a
+            // resting bar reads as a strip of right-hand padding the terminal
+            // cannot use.
+            .child(
+                Scrollbar::vertical(&self.scroll_handle)
+                    .id("terminal-scrollbar")
+                    .scrollbar_show(ScrollbarShow::Hover),
+            )
     }
 
     fn grid_line(
@@ -7226,9 +7440,9 @@ impl TerminalView {
 
     fn render_input_bar(&self, focused: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let (crow, ccol) = self.cursor_cell().unwrap_or((0, 0));
-        let cx_left = px(GRID_PAD_X) + self.cell_width * (ccol as f32);
+        let cx_left = px(self.grid_pad_x) + self.cell_width * (ccol as f32);
         let shift = self.input_scroll_rows();
-        let cy_top = px(GRID_PAD_Y) + self.line_height * (crow as f32 - shift as f32);
+        let cy_top = px(self.grid_pad_y) + self.line_height * (crow as f32 - shift as f32);
 
         if let Some(rs) = &self.reverse_search {
             let label = format!("(reverse-i-search)`{}': ", rs.query());
@@ -7455,7 +7669,7 @@ impl TerminalView {
 
         div()
             .absolute()
-            .left(px(GRID_PAD_X))
+            .left(px(self.grid_pad_x))
             .top(cy_top)
             .right_4()
             .min_h(lh)
@@ -7564,14 +7778,14 @@ impl TerminalView {
         let gap = px(6.);
         // Anchored under the word being completed, then pulled back inside the
         // pane if that would hang it over the right edge.
-        let anchor = px(GRID_PAD_X) + self.cell_width * (scol as f32);
+        let anchor = px(self.grid_pad_x) + self.cell_width * (scol as f32);
         let x = anchor
-            .min(px(GRID_PAD_X) + grid_w - menu_w)
-            .max(px(GRID_PAD_X));
+            .min(px(self.grid_pad_x) + grid_w - menu_w)
+            .max(px(self.grid_pad_x));
         let y = if place_above {
-            px(GRID_PAD_Y) + self.line_height * (srow as f32) - menu_h - gap
+            px(self.grid_pad_y) + self.line_height * (srow as f32) - menu_h - gap
         } else {
-            px(GRID_PAD_Y) + self.line_height * ((srow + 1) as f32) + gap
+            px(self.grid_pad_y) + self.line_height * ((srow + 1) as f32) + gap
         };
 
         Some(
@@ -7707,15 +7921,15 @@ impl TerminalView {
         let grid_w = self.cell_width * (total_cols as f32);
         let menu_w = if grid_w < px(720.) { grid_w } else { px(720.) };
         let y = if place_above {
-            px(GRID_PAD_Y) + lh * (srow as f32) - menu_h - gap
+            px(self.grid_pad_y) + lh * (srow as f32) - menu_h - gap
         } else {
-            px(GRID_PAD_Y) + lh * ((srow + 1) as f32) + gap
+            px(self.grid_pad_y) + lh * ((srow + 1) as f32) + gap
         };
 
         Some(
             div()
                 .absolute()
-                .left(px(GRID_PAD_X))
+                .left(px(self.grid_pad_x))
                 .top(y)
                 // Same fall-through as the completion menu (#541): a bare div
                 // inserts no hitbox, so a click on a history row landed on the
@@ -7744,16 +7958,21 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
         let text = self.integration_notice.clone()?;
-        Some(Self::notice_pill(text, cx))
+        Some(Self::notice_pill(
+            text,
+            self.grid_pad_x,
+            self.grid_pad_y,
+            cx,
+        ))
     }
 
     /// The one-row pill that floats over the pane's bottom-right corner.
-    fn notice_pill(text: String, cx: &App) -> impl IntoElement + use<> {
+    fn notice_pill(text: String, pad_x: f32, pad_y: f32, cx: &App) -> impl IntoElement + use<> {
         let theme = cx.theme();
         div()
             .absolute()
-            .bottom(px(GRID_PAD_Y))
-            .right(px(GRID_PAD_X))
+            .bottom(px(pad_y))
+            .right(px(pad_x))
             .max_w(px(560.))
             .px_3()
             .py_1()
@@ -7782,7 +8001,12 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
         let text = self.remote_completion_notice_text()?;
-        Some(Self::notice_pill(text, cx))
+        Some(Self::notice_pill(
+            text,
+            self.grid_pad_x,
+            self.grid_pad_y,
+            cx,
+        ))
     }
 
     fn kind_color(&self, kind: TokenKind, cx: &App) -> gpui::Hsla {
@@ -7857,6 +8081,9 @@ impl Drop for TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let padding = cx.global::<Config>().terminal_padding.clamp(0., 32.);
+        self.grid_pad_x = padding;
+        self.grid_pad_y = (padding * 0.5).round();
         self.sync_frame_facts();
         self.sync_typeahead_owner();
         self.sync_scrollbar();
@@ -7918,8 +8145,8 @@ impl Render for TerminalView {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .px(px(GRID_PAD_X))
-            .py(px(GRID_PAD_Y))
+            .px(px(self.grid_pad_x))
+            .py(px(self.grid_pad_y))
             .text_color(cx.theme().foreground)
             .on_key_down(cx.listener(Self::on_key_down))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
@@ -7975,6 +8202,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(|this, _: &PasteText, _w, cx| this.paste_from_clipboard(cx)))
             .on_action(cx.listener(|this, _: &AlternatePaste, _w, cx| this.alternate_paste(cx)))
             .on_action(cx.listener(|this, _: &SelectAll, _w, cx| this.select_all_contextual(cx)))
+            .on_action(cx.listener(|this, _: &ToggleCopyMode, _w, cx| this.toggle_copy_mode(cx)))
             .on_action(cx.listener(|this, _: &UndoEdit, _w, cx| this.undo_edit(false, cx)))
             .on_action(cx.listener(|this, _: &RedoEdit, _w, cx| this.undo_edit(true, cx)))
             .on_action(
@@ -8041,6 +8269,7 @@ impl Render for TerminalView {
             .children(integration_notice)
             .children(remote_completion_notice)
             .children(composer_over)
+            .children(self.render_copy_mode(cx))
             .context_menu(move |menu, window, cx| {
                 // Suppressing the popup means handing back an item-less menu:
                 // gpui-component's `ContextMenu` element skips rendering the
@@ -8052,6 +8281,20 @@ impl Render for TerminalView {
                     return menu;
                 }
                 let view = menu_view.read(cx);
+                // Read from the live keymap, so the menu teaches the chord the
+                // user actually configured — including a two-key leader
+                // sequence — rather than a string compiled in here. `None`
+                // when the action is unbound, which draws the label alone.
+                let copy_key = menu_shortcut("CopyText", cx);
+                let cut_key = menu_shortcut("CutText", cx);
+                let paste_key = menu_shortcut("PasteText", cx);
+                let select_all_key = menu_shortcut("SelectAll", cx);
+                let open_key = crate::ui::keymap::effective_key("OpenLinkUnderPointer", cx);
+                let open_default_key =
+                    crate::ui::keymap::effective_key("OpenLinkWithDefaultApp", cx);
+                let reveal_key = crate::ui::keymap::effective_key("RevealLinkUnderPointer", cx);
+                let copy_path_key =
+                    crate::ui::keymap::effective_key("CopyLinkPathUnderPointer", cx);
                 // A path is the most specific thing the pointer can be on, so
                 // what it can do goes above what the pane can do.
                 let menu = match view.menu_link_path() {
@@ -8067,11 +8310,17 @@ impl Render for TerminalView {
                         menu.min_w(px(220.))
                             .action_context(menu_focus.clone())
                             .label(label)
-                            .menu(t(L10nKey::AppMenuOpenLink), Box::new(OpenLinkUnderPointer))
+                            .menu_element(
+                                Box::new(OpenLinkUnderPointer),
+                                menu_row_with_hint(t(L10nKey::AppMenuOpenLink), open_key),
+                            )
                             .when(default_app, |menu| {
-                                menu.menu(
-                                    t(L10nKey::AppMenuOpenLinkWithDefaultApp),
+                                menu.menu_element(
                                     Box::new(OpenLinkWithDefaultApp),
+                                    menu_row_with_hint(
+                                        t(L10nKey::AppMenuOpenLinkWithDefaultApp),
+                                        open_default_key,
+                                    ),
                                 )
                             })
                             // A file on another machine has no folder here to
@@ -8080,11 +8329,11 @@ impl Render for TerminalView {
                             .menu_element_with_disabled(
                                 Box::new(RevealLinkUnderPointer),
                                 !local,
-                                menu_row_with_hint(t(reveal), None),
+                                menu_row_with_hint(t(reveal), reveal_key),
                             )
-                            .menu(
-                                t(L10nKey::AppMenuCopyLinkPath),
+                            .menu_element(
                                 Box::new(CopyLinkPathUnderPointer),
+                                menu_row_with_hint(t(L10nKey::AppMenuCopyLinkPath), copy_path_key),
                             )
                             .separator()
                     }
@@ -8096,20 +8345,20 @@ impl Render for TerminalView {
                     .menu_element_with_disabled(
                         Box::new(CopyText),
                         !has_selection,
-                        menu_row_with_hint(t(L10nKey::AppMenuCopy), mac_only("secondary-c")),
+                        menu_row_with_hint(t(L10nKey::AppMenuCopy), copy_key),
                     )
                     .menu_element_with_disabled(
                         Box::new(CutText),
                         !has_selection,
-                        menu_row_with_hint(t(L10nKey::AppMenuCut), mac_only("secondary-x")),
+                        menu_row_with_hint(t(L10nKey::AppMenuCut), cut_key),
                     )
                     .menu_element(
                         Box::new(PasteText),
-                        menu_row_with_hint(t(L10nKey::AppMenuPaste), mac_only("secondary-v")),
+                        menu_row_with_hint(t(L10nKey::AppMenuPaste), paste_key),
                     )
                     .menu_element(
                         Box::new(SelectAll),
-                        menu_row_with_hint(t(L10nKey::AppMenuSelectAll), mac_only("secondary-a")),
+                        menu_row_with_hint(t(L10nKey::AppMenuSelectAll), select_all_key),
                     )
                     .separator()
                     .menu(t(L10nKey::AppMenuFind), Box::new(FindInTerminal))
@@ -8197,17 +8446,54 @@ fn link_menu_label(path: &std::path::Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// The chord a context-menu row should print for `action`.
+///
+/// The keymap is the answer, so a rebind — including a leader sequence —
+/// shows up in the menu. The four clipboard commands are the exception off
+/// the keymap on macOS: they are wired to AppKit's standard edit menu, which
+/// answers ⌘C, ⌘X, ⌘V and ⌘A whether or not a gpui binding exists. Printing
+/// nothing there would hide a chord that still works.
+fn menu_shortcut(action: &str, cx: &App) -> Option<String> {
+    if let Some(chord) = crate::ui::keymap::effective_key(action, cx) {
+        return Some(chord);
+    }
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    Some(
+        match action {
+            "CopyText" => "secondary-c",
+            "CutText" => "secondary-x",
+            "PasteText" => "secondary-v",
+            "SelectAll" => "secondary-a",
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
 fn menu_row_with_hint(
     label: &'static str,
-    key: Option<&'static str>,
+    key: Option<String>,
 ) -> impl Fn(&mut Window, &mut App) -> gpui::AnyElement {
     move |_window, _cx| {
-        let hint = key.map(|k| {
-            Kbd::new(gpui::Keystroke::parse(k).expect("valid static keystroke"))
-                .p_0()
+        // A sequence is drawn as the keys in order, each its own cap, with
+        // the leader first — `Ctrl+B` then `C`, the way the Settings page
+        // shows it. A spec that no longer parses (a hand-edited typo) leaves
+        // the label alone instead of failing the frame that opens the menu.
+        let hint = key.as_ref().map(|spec| {
+            h_flex()
+                .gap_1()
                 .flex_nowrap()
-                .border_0()
-                .bg(gpui::transparent_white())
+                .children(spec.split_whitespace().filter_map(|chord| {
+                    gpui::Keystroke::parse(chord).ok().map(|ks| {
+                        Kbd::new(ks)
+                            .p_0()
+                            .flex_nowrap()
+                            .border_0()
+                            .bg(gpui::transparent_white())
+                    })
+                }))
         });
         h_flex()
             .w_full()
@@ -8218,15 +8504,6 @@ fn menu_row_with_hint(
             .children(hint)
             .into_any_element()
     }
-}
-
-#[cfg(target_os = "macos")]
-fn mac_only(key: &'static str) -> Option<&'static str> {
-    Some(key)
-}
-#[cfg(not(target_os = "macos"))]
-fn mac_only(_key: &'static str) -> Option<&'static str> {
-    None
 }
 
 fn word_start_of(line: &str, cursor: usize) -> usize {

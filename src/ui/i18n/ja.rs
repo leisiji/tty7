@@ -27,7 +27,7 @@ pub fn translate_ja(key: L10nKey) -> Option<&'static str> {
             "ショートカットをクリックして新しいキーを押します。続けて別の組み合わせを押すとシーケンスになります。Esc で取消、⌫ で解除。"
         }
         L10nKey::SettingsShortcutsHintTmux => {
-            "tmux プリセット：ペインとタブの操作はプレフィックスキーを使います。クリックで変更、Esc で取消、⌫ で解除。"
+            "tmux プリセット：ペインとタブの操作はリーダーキーを使います。config.json では `leader c` で任意の操作に割り当てられます。クリックで変更、Esc で取消、⌫ で解除。"
         }
         L10nKey::SettingsShortcutConflict => {
             "{keys} は「{action}」で使われています。置き換えるとそちらから外れます。"
@@ -302,6 +302,10 @@ pub fn translate_ja(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsUiFontFamily => "画面のフォント",
         L10nKey::SettingsUiFontFamilyDesc => "タブ、サイドバー、ダイアログ、設定で使うフォント",
         L10nKey::SettingsLineHeight => "行の高さ",
+        L10nKey::SettingsTerminalPadding => "ターミナルの余白",
+        L10nKey::SettingsTerminalPaddingDesc => {
+            "グリッドの周囲の余白。0 にするとペインいっぱいに表示されます（全画面含む）。"
+        }
         L10nKey::SettingsLineHeightDesc => "フォントサイズに対する行間の倍率",
         L10nKey::SettingsFontFamily => "ターミナルのフォント",
         L10nKey::SettingsFontFamilyDesc => "システムにインストールされているフォントから選択",
@@ -752,9 +756,13 @@ pub fn translate_ja(key: L10nKey) -> Option<&'static str> {
         L10nKey::ConfirmCloseWhenBusy => "実行中のときのみ",
         L10nKey::ConfirmCloseAlways => "常に確認",
         L10nKey::SettingsNewTabPositionDesc => "新しく開いたタブが挿入される場所",
+        L10nKey::SettingsTabBarStyle => "タブバーのスタイル",
+        L10nKey::SettingsTabBarStyleDesc => "角丸チップと左レール、または tmux 風のテキスト行",
+        L10nKey::SettingsTabBarHeight => "タブバーの高さ",
+        L10nKey::SettingsTabBarHeightDesc => "タブが上部・下部にあるときの横バーの高さ。",
         L10nKey::SettingsTabBarPosition => "タブバーの位置",
         L10nKey::SettingsTabBarPositionDesc => {
-            "タブを上部の横一列または左側の縦サイドバーとして表示"
+            "タブを上部・下部の横一列、または左側の縦サイドバーとして表示"
         }
         L10nKey::SettingsSidebarGrouping => "自動グループ化",
         L10nKey::SettingsSidebarGroupingDesc => {
@@ -780,16 +788,19 @@ pub fn translate_ja(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsAfterCurrent => "現在のタブの隣",
         L10nKey::SettingsAtEnd => "末尾",
         L10nKey::SettingsTop => "上部",
+        L10nKey::SettingsBottom => "下部",
         L10nKey::SettingsLeft => "左側",
         L10nKey::SettingsPreset => "プリセット",
         L10nKey::SettingsPresetDesc => "tmux はペイン・タブ操作をプレフィックスキーに（Ctrl-B C）",
-        L10nKey::SettingsPrefix => "プレフィックスキー",
+        L10nKey::SettingsPrefix => "リーダーキー",
         L10nKey::SettingsPressKeys => "キーを入力… · ⌫ でショートカットなし",
         L10nKey::SettingsPauseToSaveEsc => "一時停止して保存 · Esc",
         L10nKey::SettingsKeybindingsIntroDesc => {
             "ショートカットをクリックして新しいキーを押します。続けて押すと Ctrl-B X のようなシーケンスに。Esc で取消、Backspace で削除"
         }
-        L10nKey::SettingsPrefixNote => "プレフィックスキー単独は約 1 秒後にシェルへ",
+        L10nKey::SettingsPrefixNote => {
+            "リーダーキーをクリックして任意の組み合わせを録音します。先にリーダー、次に操作のキーを押します。単独では約 1 秒後にシェルへ"
+        }
         L10nKey::SettingsRestoreAllDefaults => "すべてのデフォルトを復元",
         L10nKey::SettingsRestoreAllDefaultsBody => {
             "変更したキーはすべてデフォルトに戻ります。元に戻すことはできません。"
@@ -1034,6 +1045,9 @@ pub fn translate_ja(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsSearchLineHeightKeywords => {
             "タイポグラフィ リーディング 行間 line height typography leading spacing"
         }
+        L10nKey::SettingsSearchTerminalPaddingKeywords => {
+            "余白 マージン 間隔 端 全画面 埋める padding margin inset gap fullscreen"
+        }
         L10nKey::SettingsSearchUiFontFamilyKeywords => {
             "インターフェース フォント ファミリー UI 書体 タブ サイドバー interface font family ui typeface"
         }
@@ -1166,8 +1180,14 @@ pub fn translate_ja(key: L10nKey) -> Option<&'static str> {
         L10nKey::SettingsSearchPromptEditorKeywords => {
             "プロンプト エディター ネイティブ シェル 入力 行編集 キーバインド 貼り付け prompt editor native shell input zle readline"
         }
+        L10nKey::SettingsSearchTabBarStyleKeywords => {
+            "タブ tmux スタイル ステータス行 テキスト tab bar style status line"
+        }
+        L10nKey::SettingsSearchTabBarHeightKeywords => {
+            "タブ 高さ サイズ 上部 下部 バー tab bar height size strip"
+        }
         L10nKey::SettingsSearchTabBarPositionKeywords => {
-            "タブ 垂直 サイドバー 左 上 レイアウト レール tab bar position tabs vertical sidebar left top rail"
+            "タブ 垂直 サイドバー 左 上 下 レイアウト レール tab bar position tabs vertical sidebar left top bottom rail"
         }
         L10nKey::SettingsSearchTabCompletionKeywords => {
             "補完 メニュー サジェスト タブ プロンプト tab completion menu suggestions prompt"
@@ -1854,6 +1874,7 @@ pub fn translate_ja(key: L10nKey) -> Option<&'static str> {
         L10nKey::CmdMoveTabRight => "タブを右へ移動",
         L10nKey::CmdRecentTabSwitcher => "最近のタブを切り替える",
         L10nKey::CmdRecentTabSwitcherReverse => "最近のタブを切り替える（逆順）",
+        L10nKey::CmdActivateLastTab => "前のタブ（最後に使用）",
         L10nKey::CmdCopyWorkingDirectory => "作業ディレクトリをコピー",
         L10nKey::CmdCopySessionId => "セッション ID をコピー",
         L10nKey::CmdCopySessionIdSubtitle => "コーディングエージェント自身のセッション ID",
@@ -1960,6 +1981,10 @@ pub fn translate_ja(key: L10nKey) -> Option<&'static str> {
         L10nKey::CmdFindNext => "次を検索",
         L10nKey::CmdFindPrevious => "前を検索",
         L10nKey::CmdCopy => "コピー",
+        L10nKey::CmdCopyMode => "コピーモード",
+        L10nKey::CopyModeHint => "2 文字を入力してコピー · Esc で取消",
+        L10nKey::CopyModeHintTyped => "「{prefix}」 — 2 文字目を入力 · Esc で取消",
+        L10nKey::CopyModeNoMatches => "画面にコピーできるものはありません · Esc で取消",
         L10nKey::CmdCut => "切り取り",
         L10nKey::CmdPaste => "貼り付け",
         L10nKey::CmdAlternatePaste => "貼り付け（全画面アプリを除く）",

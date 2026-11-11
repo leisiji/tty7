@@ -3,8 +3,9 @@ use gpui::{App, Global, KeyBinding, Keystroke, Modifiers};
 use crate::core::actions::*;
 use crate::core::config::{Config, KeybindingOverride};
 use crate::terminal::view::{
-    AlternatePaste, ClearScrollback, CopyRaw, CopyText, FindInTerminal, FindNext, FindPrevious,
-    InsertNewline, InsertNewlineFallback, PasteText, RunReverseSearchSelection, ToggleComposer,
+    AlternatePaste, ClearScrollback, CopyRaw, CopyText, CutText, FindInTerminal, FindNext,
+    FindPrevious, InsertNewline, InsertNewlineFallback, PasteText, RunReverseSearchSelection,
+    SelectAll, ToggleComposer, ToggleCopyMode,
 };
 use crate::ui::i18n::{L10nKey, t, t_fmt};
 use crate::ui::palette;
@@ -21,6 +22,12 @@ use crate::ui::theme::set_menus;
 /// out has no backspace in any text field in the app (#548).
 struct BaseBindings(Vec<KeyBinding>);
 impl Global for BaseBindings {}
+
+/// The recorder's target for the leader key. Not an action name: the
+/// Settings page records a chord through the same capture machinery as a
+/// keybinding, and this sentinel sends the result to `prefix` instead of a
+/// `keybindings` entry.
+pub(crate) const LEADER_RECORDING: &str = "__tty7_leader__";
 
 pub fn init(cx: &mut App) {
     if cx.try_global::<BaseBindings>().is_none() {
@@ -485,6 +492,9 @@ fn shipped_bindings() -> Vec<(&'static str, &'static str)> {
             "FocusNextPane",
             per_platform("secondary-]", "secondary-shift-]"),
         ),
+        // xterm-muxer's `Alt+p`: the plain-way round the panes, without the
+        // bracket chord. A second shipped chord, merged into the same slot.
+        ("FocusNextPane", "alt-p"),
         (
             "FocusPrevPane",
             per_platform("secondary-[", "secondary-shift-["),
@@ -516,6 +526,9 @@ fn shipped_bindings() -> Vec<(&'static str, &'static str)> {
         // and every browser use for the same thing.
         ("NextTab", "ctrl-tab"),
         ("PrevTab", "ctrl-shift-tab"),
+        // xterm-muxer's `Alt+m`: one press, back to the tab you were last on.
+        // It is not the strip's previous row — that is what SelectPrevTab is.
+        ("ActivateLastTab", "alt-m"),
         (
             "SelectNextTab",
             per_platform("secondary-shift-]", "ctrl-pagedown"),
@@ -618,14 +631,31 @@ fn shipped_bindings() -> Vec<(&'static str, &'static str)> {
         // ⌘I for "input". Nothing in the table holds it, and no shell or agent
         // reads Cmd at all. Off macOS Ctrl+I is Tab, so the chord takes Shift
         // like every other terminal command there.
-        (
-            "ToggleComposer",
-            per_platform("secondary-i", "secondary-shift-i"),
-        ),
+        // Off macOS Ctrl+Shift+I is copy mode's entry chord, so the composer
+        // keeps the letter with Alt instead. macOS has room for both: ⌘I and
+        // ⇧⌘I are distinct.
+        ("ToggleComposer", per_platform("secondary-i", "ctrl-alt-i")),
         ("CopyText", per_platform("", "ctrl-shift-c")),
         ("CopyRaw", "cmd-alt-c"),
+        // The two-letter picker. Ctrl+Shift+C is already Copy on the
+        // platforms that use it, so the picker takes the free I; macOS uses
+        // the secondary key like every other terminal command.
+        (
+            "ToggleCopyMode",
+            per_platform("secondary-shift-i", "ctrl-shift-i"),
+        ),
+        ("CutText", per_platform("secondary-x", "ctrl-shift-x")),
         ("PasteText", paste_text_default()),
         ("AlternatePaste", alternate_paste_default()),
+        ("SelectAll", per_platform("secondary-a", "ctrl-shift-a")),
+        // The link rows of the terminal context menu. They act on the path
+        // under the pointer, so no chord ships: the menu is where they are
+        // discovered, and a user who wants them on a key (or on the tmux
+        // leader) can say so in `keybindings`.
+        ("OpenLinkUnderPointer", ""),
+        ("OpenLinkWithDefaultApp", ""),
+        ("RevealLinkUnderPointer", ""),
+        ("CopyLinkPathUnderPointer", ""),
         ("OpenSettings", "secondary-,"),
         (
             "ShowKeyboardShortcuts",
@@ -914,6 +944,10 @@ fn authored_entry(action: &str) -> Option<(CommandGroup, String)> {
             CommandGroup::TabsPanes,
             t(L10nKey::CmdRecentTabSwitcherReverse).to_string(),
         ),
+        "ActivateLastTab" => (
+            CommandGroup::TabsPanes,
+            t(L10nKey::CmdActivateLastTab).to_string(),
+        ),
         "SelectNextTab" => (CommandGroup::TabsPanes, t(L10nKey::CmdNextTab).to_string()),
         "SelectPrevTab" => (
             CommandGroup::TabsPanes,
@@ -1036,7 +1070,31 @@ fn authored_entry(action: &str) -> Option<(CommandGroup, String)> {
         ),
         "CopyText" => (CommandGroup::Terminal, t(L10nKey::CmdCopy).to_string()),
         "CopyRaw" => (CommandGroup::Terminal, t(L10nKey::CmdCopyRaw).to_string()),
+        "ToggleCopyMode" => (CommandGroup::Terminal, t(L10nKey::CmdCopyMode).to_string()),
+        "CutText" => (CommandGroup::Terminal, t(L10nKey::CmdCut).to_string()),
         "PasteText" => (CommandGroup::Terminal, t(L10nKey::CmdPaste).to_string()),
+        "SelectAll" => (CommandGroup::Terminal, t(L10nKey::CmdSelectAll).to_string()),
+        "OpenLinkUnderPointer" => (
+            CommandGroup::Terminal,
+            t(L10nKey::AppMenuOpenLink).to_string(),
+        ),
+        "OpenLinkWithDefaultApp" => (
+            CommandGroup::Terminal,
+            t(L10nKey::AppMenuOpenLinkWithDefaultApp).to_string(),
+        ),
+        "RevealLinkUnderPointer" => (
+            CommandGroup::Terminal,
+            t(if cfg!(target_os = "macos") {
+                L10nKey::AppMenuRevealInFinder
+            } else {
+                L10nKey::AppMenuRevealInFolder
+            })
+            .to_string(),
+        ),
+        "CopyLinkPathUnderPointer" => (
+            CommandGroup::Terminal,
+            t(L10nKey::AppMenuCopyLinkPath).to_string(),
+        ),
         "AlternatePaste" => (
             CommandGroup::Terminal,
             t(L10nKey::CmdAlternatePaste).to_string(),
@@ -1290,23 +1348,50 @@ struct ActionChords {
     configured: Vec<String>,
 }
 
+/// Rewrite the `leader` shorthand in a configured chord.
+///
+/// `"CopyText": "leader ["` is the readable way to say the same thing as
+/// `"CopyText": "ctrl-b ["`, and it keeps working when the leader itself is
+/// changed once in Settings. Only a whole first token counts: a key genuinely
+/// named `leader` is not a thing any backend delivers, and leaving everything
+/// else — including a sequence that merely contains the word later — alone
+/// keeps the rewrite from eating a user's typo into something else.
+fn expand_leader(spec: &str, leader: &str) -> String {
+    if leader.is_empty() {
+        return spec.to_string();
+    }
+    match spec.strip_prefix("leader ") {
+        Some(rest) => format!("{leader} {rest}"),
+        None => spec.to_string(),
+    }
+}
+
 fn resolve_chords(
     preset: &str,
     prefix: &str,
     overrides: &std::collections::HashMap<String, KeybindingOverride>,
 ) -> Vec<ActionChords> {
-    let mut resolved: Vec<ActionChords> = default_bindings()
-        .into_iter()
-        .map(|(action, key)| ActionChords {
-            action: action.to_string(),
-            shipped: [key]
-                .into_iter()
-                .filter(|k| !k.is_empty())
-                .map(str::to_string)
-                .collect(),
-            configured: Vec::new(),
-        })
-        .collect();
+    // One slot per action, with every shipped chord on it. The table keeps
+    // one row per action, so an action that ships more than one chord lists
+    // them twice there and is merged here; a second slot would give the
+    // Settings page two rows that fight over the same override.
+    let mut resolved: Vec<ActionChords> = Vec::new();
+    for (action, key) in default_bindings() {
+        let slot = match resolved.iter_mut().find(|s| s.action == action) {
+            Some(slot) => slot,
+            None => {
+                resolved.push(ActionChords {
+                    action: action.to_string(),
+                    shipped: Vec::new(),
+                    configured: Vec::new(),
+                });
+                resolved.last_mut().expect("a slot was just pushed")
+            }
+        };
+        if !key.is_empty() && !slot.shipped.iter().any(|k| same_chord(k, key)) {
+            slot.shipped.push(key.to_string());
+        }
+    }
     // A preset is a scheme rather than an addition: its chord takes the
     // default's place.
     for (action, key) in preset_bindings(preset, prefix) {
@@ -1332,15 +1417,17 @@ fn resolve_chords(
             // (#868): `"NextTab": "cmd-shift-]"` is a second way to switch tabs,
             // and Ctrl+Tab going dead because of it was the bug.
             KeybindingOverride::Add(key) => {
-                if !slot.shipped.iter().any(|k| same_chord(k, key)) {
-                    slot.configured.push(key.clone());
+                let key = expand_leader(key, prefix);
+                if !slot.shipped.iter().any(|k| same_chord(k, &key)) {
+                    slot.configured.push(key);
                 }
             }
             KeybindingOverride::Exact(keys) => {
                 slot.shipped.clear();
                 for key in keys {
-                    if !key.is_empty() && !slot.configured.iter().any(|k| same_chord(k, key)) {
-                        slot.configured.push(key.clone());
+                    let key = expand_leader(key, prefix);
+                    if !key.is_empty() && !slot.configured.iter().any(|k| same_chord(k, &key)) {
+                        slot.configured.push(key);
                     }
                 }
             }
@@ -1419,6 +1506,15 @@ fn tmux_preset(prefix: &str) -> Vec<(String, String)> {
         // committed here — the modifier it waits on is not held (#867).
         ("SelectNextTab", p("n")),
         ("SelectPrevTab", p("p")),
+        // tmux's own screen keys, on the menu commands they stand for: `[`
+        // is copy-mode (the selection `CopyText` copies), `]` pastes the
+        // buffer, `f` finds in the window, and `C` clears what the scrollback
+        // holds. `a` has no tmux equivalent; it is free in this table.
+        ("ToggleCopyMode", p("[")),
+        ("PasteText", p("]")),
+        ("FindInTerminal", p("f")),
+        ("ClearScrollback", p("shift-c")),
+        ("SelectAll", p("a")),
         ("ActivateTab1", p("1")),
         ("ActivateTab2", p("2")),
         ("ActivateTab3", p("3")),
@@ -1730,8 +1826,22 @@ fn keystroke_is_valid(s: &str) -> bool {
 
 fn action_context(action: &str) -> Option<&'static str> {
     match action {
-        "FindInTerminal" | "FindNext" | "FindPrevious" | "ClearScrollback" | "InsertNewline"
-        | "CopyText" | "CopyRaw" | "PasteText" | "ToggleComposer" => Some("Terminal"),
+        "FindInTerminal"
+        | "FindNext"
+        | "FindPrevious"
+        | "ClearScrollback"
+        | "InsertNewline"
+        | "CopyText"
+        | "CopyRaw"
+        | "CutText"
+        | "PasteText"
+        | "SelectAll"
+        | "ToggleCopyMode"
+        | "ToggleComposer"
+        | "OpenLinkUnderPointer"
+        | "OpenLinkWithDefaultApp"
+        | "RevealLinkUnderPointer"
+        | "CopyLinkPathUnderPointer" => Some("Terminal"),
         // `alt_screen` is declared by the pane whenever a full-screen program
         // owns the grid, so this binding is simply absent there and Ctrl+V
         // carries on to the PTY as SYN (#677).
@@ -1794,6 +1904,7 @@ fn make_binding(action: &str, keystroke: &str) -> Option<KeyBinding> {
         "SwapPanePrev" => KeyBinding::new(keystroke, SwapPanePrev, None),
         "NextTab" => KeyBinding::new(keystroke, NextTab, None),
         "PrevTab" => KeyBinding::new(keystroke, PrevTab, None),
+        "ActivateLastTab" => KeyBinding::new(keystroke, ActivateLastTab, None),
         "SelectNextTab" => KeyBinding::new(keystroke, SelectNextTab, None),
         "SelectPrevTab" => KeyBinding::new(keystroke, SelectPrevTab, None),
         "MoveTabLeft" => KeyBinding::new(keystroke, MoveTabLeft, None),
@@ -1854,8 +1965,23 @@ fn make_binding(action: &str, keystroke: &str) -> Option<KeyBinding> {
         "InsertNewline" => KeyBinding::new(keystroke, InsertNewline, action_context(action)),
         "CopyText" => KeyBinding::new(keystroke, CopyText, action_context(action)),
         "CopyRaw" => KeyBinding::new(keystroke, CopyRaw, action_context(action)),
+        "CutText" => KeyBinding::new(keystroke, CutText, action_context(action)),
         "PasteText" => KeyBinding::new(keystroke, PasteText, action_context(action)),
         "AlternatePaste" => KeyBinding::new(keystroke, AlternatePaste, action_context(action)),
+        "SelectAll" => KeyBinding::new(keystroke, SelectAll, action_context(action)),
+        "ToggleCopyMode" => KeyBinding::new(keystroke, ToggleCopyMode, action_context(action)),
+        "OpenLinkUnderPointer" => {
+            KeyBinding::new(keystroke, OpenLinkUnderPointer, action_context(action))
+        }
+        "OpenLinkWithDefaultApp" => {
+            KeyBinding::new(keystroke, OpenLinkWithDefaultApp, action_context(action))
+        }
+        "RevealLinkUnderPointer" => {
+            KeyBinding::new(keystroke, RevealLinkUnderPointer, action_context(action))
+        }
+        "CopyLinkPathUnderPointer" => {
+            KeyBinding::new(keystroke, CopyLinkPathUnderPointer, action_context(action))
+        }
         "OpenSettings" => KeyBinding::new(keystroke, OpenSettings, None),
         "ShowKeyboardShortcuts" => KeyBinding::new(keystroke, ShowKeyboardShortcuts, None),
         "About" => KeyBinding::new(keystroke, About, None),
@@ -2057,6 +2183,37 @@ mod tests {
     }
 
     #[test]
+    fn xterm_muxer_pane_and_last_tab_chords_reach_their_actions() {
+        let effective: Vec<(String, String)> = default_bindings()
+            .into_iter()
+            .map(|(a, k)| (a.to_string(), k.to_string()))
+            .collect();
+        // FocusNextPane keeps its bracket chord and gains Alt+P; the merge in
+        // `resolve_chords` has to leave both on one slot.
+        let resolved = resolve_chords("default", "ctrl-b", &Default::default());
+        let slot = resolved
+            .iter()
+            .find(|s| s.action == "FocusNextPane")
+            .expect("FocusNextPane has a slot");
+        assert_eq!(
+            slot.shipped,
+            vec![
+                per_platform("secondary-]", "secondary-shift-]").to_string(),
+                "alt-p".to_string()
+            ],
+            "a second shipped chord belongs on the same slot, in table order"
+        );
+        assert_eq!(
+            dispatched(&effective, "alt-p", "Terminal"),
+            vec![FocusNextPane::name_for_type()]
+        );
+        assert_eq!(
+            dispatched(&effective, "alt-m", "Workspace"),
+            vec![ActivateLastTab::name_for_type()]
+        );
+    }
+
+    #[test]
     fn new_window_ships_a_chord_only_where_one_is_free() {
         let mut effective: Vec<(String, String)> = default_bindings()
             .into_iter()
@@ -2192,6 +2349,34 @@ mod tests {
     }
 
     #[test]
+    fn a_configured_chord_may_spell_the_leader_by_name() {
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert(
+            "CopyText".to_string(),
+            KeybindingOverride::Add("leader [".to_string()),
+        );
+        overrides.insert(
+            "PasteText".to_string(),
+            KeybindingOverride::Exact(vec!["leader ]".to_string()]),
+        );
+        let resolved = resolve_chords("default", "ctrl-b", &overrides);
+        let flattened = flatten_chords(&resolved);
+        assert!(
+            flattened.contains(&("CopyText".to_string(), "ctrl-b [".to_string())),
+            "the leader shorthand has to become the configured key"
+        );
+        assert!(
+            flattened.contains(&("PasteText".to_string(), "ctrl-b ]".to_string())),
+            "an exact list expands it too"
+        );
+
+        // The rewrite is the first token and nothing else: a leader that is
+        // not a whole token, or an empty leader, is left as written.
+        assert_eq!(expand_leader("leaderless [", "ctrl-b"), "leaderless [");
+        assert_eq!(expand_leader("leader [", ""), "leader [");
+    }
+
+    #[test]
     fn tmux_preset_keystrokes_all_parse_and_map_to_actions() {
         for (action, key) in tmux_preset("ctrl-b") {
             assert!(
@@ -2303,6 +2488,10 @@ mod tests {
                 .find(|(a, _)| a == "CopyText")
                 .map(|(_, k)| k.as_str()),
             Some("ctrl-shift-c")
+        );
+        assert_eq!(
+            dispatched(&effective, "ctrl-shift-i", "Terminal"),
+            vec![ToggleCopyMode::name_for_type()]
         );
         assert!(extra_keystrokes(&effective).contains(&("PasteText", "shift-insert")));
         for key in ["ctrl-shift-v", "shift-insert"] {

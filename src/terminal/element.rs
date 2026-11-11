@@ -589,7 +589,33 @@ fn for_each_special_underline(
         )
     };
 
+    // The underline's own line sits a fifth of a cell above the bottom edge —
+    // where `descent * 0.618` lands for the fonts this ships with, and low
+    // enough to clear the baseline without touching the next row.
+    let underline_y = snap(y1 - (bounds.size.height.as_f32() * 0.2).max(device_px));
     match kind {
+        UnderlineKind::Single => {
+            draw(line(underline_y, x0, x1));
+        }
+        UnderlineKind::Curly => {
+            // One device pixel per half-period, alternating either side of
+            // the resting line: at 1x that is a two-pixel wave, and at 2x it
+            // keeps the same rhythm in logical pixels.
+            let amp = device_px.max(1.);
+            let step = (2. * device_px).max(device_px);
+            let mut x = x0;
+            let mut raised = true;
+            while x < x1 {
+                let y = snap(if raised {
+                    underline_y - amp
+                } else {
+                    underline_y + amp
+                });
+                draw(line(y, x, (x + step).min(x1)));
+                raised = !raised;
+                x += step;
+            }
+        }
         UnderlineKind::Double => {
             draw(line(y1 - 4. * device_px, x0, x1));
             draw(line(y1 - 2. * device_px, x0, x1));
@@ -621,7 +647,11 @@ fn paint_special_underlines(window: &mut Window, geom: &CellGeom, buf: &[RenderC
             let cell = &buf[row_base + col];
             if !matches!(
                 cell.underline,
-                UnderlineKind::Double | UnderlineKind::Dotted | UnderlineKind::Dashed
+                UnderlineKind::Single
+                    | UnderlineKind::Curly
+                    | UnderlineKind::Double
+                    | UnderlineKind::Dotted
+                    | UnderlineKind::Dashed
             ) {
                 col += 1;
                 continue;
@@ -681,16 +711,16 @@ impl GlyphStyle {
     }
 
     fn underline_style(&self) -> Option<gpui::UnderlineStyle> {
-        (matches!(self.underline, UnderlineKind::Single | UnderlineKind::Curly)
-            || (self.link_hover && self.underline == UnderlineKind::None))
-            .then(|| {
-                let wavy = self.underline == UnderlineKind::Curly;
-                gpui::UnderlineStyle {
-                    thickness: px(1.),
-                    color: Some(self.underline_color.unwrap_or(self.fg)),
-                    wavy,
-                }
-            })
+        // Every SGR underline is painted from the cell buffer in
+        // `paint_special_underlines`. Only the hover hint has no underline
+        // flag of its own, so it is the one decoration left to gpui's text
+        // run — and it is the one whose position does not have to line up
+        // with a cell edge.
+        (self.link_hover && self.underline == UnderlineKind::None).then(|| gpui::UnderlineStyle {
+            thickness: px(1.),
+            color: Some(self.underline_color.unwrap_or(self.fg)),
+            wavy: false,
+        })
     }
 
     fn strikethrough_style(&self) -> Option<StrikethroughStyle> {
@@ -1045,15 +1075,9 @@ fn link_underline_color(cell: &RenderCell, armed: bool) -> Option<Hsla> {
 }
 
 fn native_cell_residue(style: &GlyphStyle) -> Option<char> {
-    // Special underlines are painted directly from the cell buffer, so a
-    // shaped blank is only needed for decorations GPUI owns.
-    (style.strikeout
-        || matches!(
-            style.underline,
-            UnderlineKind::Single | UnderlineKind::Curly
-        )
-        || style.link_hover)
-        .then_some(' ')
+    // Every underline is painted directly from the cell buffer, so a shaped
+    // blank is only needed for decorations GPUI's text run still owns.
+    (style.strikeout || style.link_hover).then_some(' ')
 }
 
 /// How much room a segment's glyph gets before it is made to shrink.
@@ -2135,9 +2159,17 @@ impl TerminalElement {
             let (col, row, left) = geom.pos_to_cell(ev.position);
             let raw_row = geom.pos_to_row_raw(ev.position);
             let mods = ev.modifiers;
+            // A keyboard switch (Alt+P) changes focus without the pointer
+            // moving. Whether this event is a real movement or the platform's
+            // repeat of the same position decides whether it may follow.
+            let pointer_moved = view.update(cx, |v, _| {
+                let moved = v.last_pointer_pos != Some(ev.position);
+                v.last_pointer_pos = Some(ev.position);
+                moved
+            });
             let Some(button) = ev.pressed_button else {
                 let inside = hitbox.is_hovered(window);
-                if inside && cx.global::<Config>().focus_follows_mouse {
+                if inside && cx.global::<Config>().focus_follows_mouse && pointer_moved {
                     let handle = view.read(cx).focus_handle.clone();
                     if !handle.is_focused(window) {
                         window.focus(&handle, cx);
@@ -3613,8 +3645,8 @@ mod tests {
             c.underline = kind;
             assert_eq!(
                 native_cell_residue(&GlyphStyle::of(&c)),
-                Some(' '),
-                "{kind:?} underline dropped on a box-drawing cell"
+                None,
+                "{kind:?} underline is painted from the cell buffer, not the run"
             );
         }
 
@@ -4514,6 +4546,14 @@ mod tests {
             rects
         };
 
+        let single = ink(UnderlineKind::Single);
+        assert_eq!(single.len(), 1, "single underline is one stroke");
+        let curly = ink(UnderlineKind::Curly);
+        assert!(
+            curly.len() > 1,
+            "the wavy underline alternates either side of its resting line"
+        );
+
         let double = ink(UnderlineKind::Double);
         assert_eq!(
             double.len(),
@@ -4572,6 +4612,8 @@ mod tests {
     #[test]
     fn special_underlines_are_not_overpainted_by_link_hover() {
         for kind in [
+            UnderlineKind::Single,
+            UnderlineKind::Curly,
             UnderlineKind::Double,
             UnderlineKind::Dotted,
             UnderlineKind::Dashed,
@@ -4586,6 +4628,8 @@ mod tests {
     #[test]
     fn native_cells_keep_only_decorations_that_need_glyph_shaping() {
         for kind in [
+            UnderlineKind::Single,
+            UnderlineKind::Curly,
             UnderlineKind::Double,
             UnderlineKind::Dotted,
             UnderlineKind::Dashed,

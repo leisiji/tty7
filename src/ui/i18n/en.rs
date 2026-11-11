@@ -27,7 +27,7 @@ pub fn translate_en(key: L10nKey) -> &'static str {
             "Click a shortcut and press new keys. Press a second chord right after to make a sequence. Esc cancels, ⌫ clears."
         }
         L10nKey::SettingsShortcutsHintTmux => {
-            "tmux preset: pane and tab actions use a prefix key. Click a shortcut to change it; Esc cancels, ⌫ clears."
+            "tmux preset: pane and tab actions use the leader key. In config.json any action can be bound with `leader c`. Click a shortcut to change it; Esc cancels, ⌫ clears."
         }
         L10nKey::SettingsShortcutConflict => {
             "{keys} is already used by “{action}”. Replacing takes it from there."
@@ -285,6 +285,10 @@ pub fn translate_en(key: L10nKey) -> &'static str {
         L10nKey::SettingsUiFontFamily => "Interface font",
         L10nKey::SettingsUiFontFamilyDesc => "For tabs, sidebars, dialogs and settings.",
         L10nKey::SettingsLineHeight => "Line height",
+        L10nKey::SettingsTerminalPadding => "Terminal padding",
+        L10nKey::SettingsTerminalPaddingDesc => {
+            "Space around the grid. Zero fills the pane, including in fullscreen."
+        }
         L10nKey::SettingsLineHeightDesc => "Row spacing as a multiple of the font size.",
         L10nKey::SettingsFontFamily => "Terminal font",
         L10nKey::SettingsFontFamilyDesc => "Pick from fonts installed on your system.",
@@ -745,8 +749,16 @@ pub fn translate_en(key: L10nKey) -> &'static str {
         L10nKey::ConfirmCloseNever => "Never",
         L10nKey::ConfirmCloseWhenBusy => "When busy",
         L10nKey::ConfirmCloseAlways => "Always",
+        L10nKey::SettingsTabBarStyle => "Tab bar style",
+        L10nKey::SettingsTabBarStyleDesc => {
+            "Rounded chips and the left rail, or a tmux-style text line."
+        }
+        L10nKey::SettingsTabBarHeight => "Tab bar height",
+        L10nKey::SettingsTabBarHeightDesc => {
+            "Height of the horizontal bar when the tabs are at the top or bottom."
+        }
         L10nKey::SettingsTabBarPosition => "Tab bar position",
-        L10nKey::SettingsTabBarPositionDesc => "A strip on top or a sidebar on the left.",
+        L10nKey::SettingsTabBarPositionDesc => "Top, bottom, or a sidebar on the left.",
         L10nKey::SettingsSidebarGrouping => "Auto grouping",
         L10nKey::SettingsSidebarGroupingDesc => {
             "Group unpinned tabs by git repository, SSH tabs by host."
@@ -773,16 +785,19 @@ pub fn translate_en(key: L10nKey) -> &'static str {
         L10nKey::SettingsAfterCurrent => "After current",
         L10nKey::SettingsAtEnd => "At end",
         L10nKey::SettingsTop => "Top",
+        L10nKey::SettingsBottom => "Bottom",
         L10nKey::SettingsLeft => "Left",
         L10nKey::SettingsPreset => "Preset",
         L10nKey::SettingsPresetDesc => "tmux maps pane and tab actions to prefix keys (Ctrl-B C).",
-        L10nKey::SettingsPrefix => "Prefix",
+        L10nKey::SettingsPrefix => "Leader key",
         L10nKey::SettingsPressKeys => "Press keys… · ⌫ for no shortcut",
         L10nKey::SettingsPauseToSaveEsc => "pause to save · Esc",
         L10nKey::SettingsKeybindingsIntroDesc => {
             "Click a shortcut and press new keys; chain keys for sequences like Ctrl-B X. Esc cancels, Backspace clears."
         }
-        L10nKey::SettingsPrefixNote => "A lone prefix key reaches the shell after ~1s.",
+        L10nKey::SettingsPrefixNote => {
+            "Click the leader to record any chord, then press it before an action's key. A lone leader reaches the shell after ~1s."
+        }
         L10nKey::SettingsRestoreAllDefaults => "Restore all defaults",
         L10nKey::SettingsRestoreAllDefaultsBody => {
             "Every key you have rebound goes back to its default. There is no undo."
@@ -1001,6 +1016,9 @@ pub fn translate_en(key: L10nKey) -> &'static str {
         }
         L10nKey::SettingsSearchKeybindingsTitle => "Keyboard shortcuts",
         L10nKey::SettingsSearchLineHeightKeywords => "typography leading spacing",
+        L10nKey::SettingsSearchTerminalPaddingKeywords => {
+            "padding margin inset gap edge fullscreen fill terminal"
+        }
         L10nKey::SettingsSearchUiFontFamilyKeywords => {
             "interface font family ui typeface typography chrome sidebar tab"
         }
@@ -1105,8 +1123,14 @@ pub fn translate_en(key: L10nKey) -> &'static str {
         L10nKey::SettingsSearchPromptEditorKeywords => {
             "prompt editor native shell input line editor zle readline fish keybindings ime paste"
         }
+        L10nKey::SettingsSearchTabBarStyleKeywords => {
+            "tabs tmux style status line strip chips rail"
+        }
+        L10nKey::SettingsSearchTabBarHeightKeywords => {
+            "tabs height tall short size bar strip top bottom"
+        }
         L10nKey::SettingsSearchTabBarPositionKeywords => {
-            "tabs vertical sidebar left top layout rail"
+            "tabs vertical sidebar left top bottom layout rail"
         }
         L10nKey::SettingsSearchTabCompletionKeywords => {
             "complete completion menu suggestions tab prompt"
@@ -1791,6 +1815,7 @@ pub fn translate_en(key: L10nKey) -> &'static str {
         L10nKey::CmdMoveTabRight => "Move Tab Right",
         L10nKey::CmdRecentTabSwitcher => "Recent Tab Switcher",
         L10nKey::CmdRecentTabSwitcherReverse => "Recent Tab Switcher (Reverse)",
+        L10nKey::CmdActivateLastTab => "Previous Tab (Last Used)",
         L10nKey::CmdCopyWorkingDirectory => "Copy Working Directory",
         L10nKey::CmdCopySessionId => "Copy Session ID",
         L10nKey::CmdCopySessionIdSubtitle => "the coding agent's own session id",
@@ -1899,6 +1924,10 @@ pub fn translate_en(key: L10nKey) -> &'static str {
         L10nKey::CmdFindNext => "Find Next",
         L10nKey::CmdFindPrevious => "Find Previous",
         L10nKey::CmdCopy => "Copy",
+        L10nKey::CmdCopyMode => "Copy Mode",
+        L10nKey::CopyModeHint => "Type 2 letters to copy · Esc to cancel",
+        L10nKey::CopyModeHintTyped => "“{prefix}” — type the second letter · Esc to cancel",
+        L10nKey::CopyModeNoMatches => "No matches on screen · Esc to cancel",
         L10nKey::CmdCut => "Cut",
         L10nKey::CmdPaste => "Paste",
         L10nKey::CmdAlternatePaste => "Paste (outside full-screen apps)",

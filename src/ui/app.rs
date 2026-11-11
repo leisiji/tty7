@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::core::actions::*;
 use crate::core::config::{
     Config, CursorStyle as ConfigCursorStyle, MouseZoomModifier, NewTabPosition, RightPanelTab,
-    ShellConfig, TabBarPosition, WindowBackdrop,
+    ShellConfig, TabBarPosition, TabBarStyle, WindowBackdrop,
 };
 use crate::core::session::{
     Session, SessionAxis, SessionPane, SessionTab, WorkspaceId, WorkspaceStore,
@@ -1404,6 +1404,16 @@ pub(crate) fn window_controls_w(fullscreen: bool) -> f32 {
         true => WINDOW_CONTROLS_W,
         false => 0.,
     }
+}
+
+/// Whether the top strip is drawn.
+///
+/// Fullscreen puts the top status bar away, because the window chrome and
+/// Search Everywhere are not what the mode is for. The one exception is a bar
+/// that is itself the tabs: hide that and the tabs go with it, which is not
+/// what fullscreen means.
+pub(crate) fn top_bar_shown(fullscreen: bool, position: TabBarPosition) -> bool {
+    !fullscreen || position == TabBarPosition::Top
 }
 
 impl Tty7App {
@@ -2848,6 +2858,16 @@ impl Tty7App {
         self.set_line_height(self.line_height + delta, cx);
     }
 
+    pub(crate) fn set_terminal_padding(&mut self, padding: f32, cx: &mut Context<Self>) {
+        let padding = padding.clamp(0., crate::core::config::TERMINAL_PADDING_MAX);
+        let cfg = cx.global_mut::<Config>();
+        cfg.terminal_padding = padding;
+        self.persist_settings_config(cx);
+        // Every pane reads the value in its own render; the notification makes
+        // the window walk them all on the same frame the setting lands.
+        cx.notify();
+    }
+
     pub(crate) fn reset_line_height(&mut self, cx: &mut Context<Self>) {
         self.set_line_height(Config::default().line_height, cx);
     }
@@ -4004,21 +4024,65 @@ impl Tty7App {
         self.update_config(cx, |cfg| cfg.tab_bar_position = pos);
     }
 
+    pub(crate) fn set_tab_bar_height(&mut self, height: f32, cx: &mut Context<Self>) {
+        let style = cx.global::<Config>().tab_bar_style;
+        let height = height.clamp(
+            crate::core::config::tab_bar_min_height(style),
+            crate::core::config::TAB_BAR_HEIGHT_MAX,
+        );
+        self.update_config(cx, |cfg| cfg.tab_bar_height = height);
+    }
+
+    pub(crate) fn set_tab_bar_style(&mut self, style: TabBarStyle, cx: &mut Context<Self>) {
+        self.update_config(cx, |cfg| {
+            cfg.tab_bar_style = style;
+            // The tmux line has no vertical form. Ask for it while the rail is
+            // up and the rail gives way to the bar at the top, rather than
+            // showing neither.
+            if style == TabBarStyle::Tmux && cfg.tab_bar_position == TabBarPosition::Left {
+                cfg.tab_bar_position = TabBarPosition::Top;
+            }
+            // A chiptstrip cannot be shorter than its chips; a text line that
+            // was allowed to shrink comes back up to the standard floor.
+            let floor = crate::core::config::tab_bar_min_height(style);
+            cfg.tab_bar_height = cfg.tab_bar_height.max(floor);
+        });
+    }
+
     pub(crate) fn set_sidebar_auto_grouping(&mut self, on: bool, cx: &mut Context<Self>) {
         self.update_config(cx, |cfg| cfg.sidebar_auto_grouping = on);
     }
 
     pub(crate) fn toggle_tab_sidebar(&mut self, cx: &mut Context<Self>) {
-        let next = match cx.global::<Config>().tab_bar_position {
-            TabBarPosition::Top => TabBarPosition::Left,
-            TabBarPosition::Left => TabBarPosition::Top,
+        let cfg = cx.global::<Config>();
+        let next = match (cfg.tab_bar_style, cfg.tab_bar_position) {
+            // The tmux line has two ends and no rail, so it cycles those.
+            (TabBarStyle::Tmux, TabBarPosition::Top) => TabBarPosition::Bottom,
+            (TabBarStyle::Tmux, _) => TabBarPosition::Top,
+            (_, TabBarPosition::Top) => TabBarPosition::Bottom,
+            (_, TabBarPosition::Bottom) => TabBarPosition::Left,
+            (_, TabBarPosition::Left) => TabBarPosition::Top,
         };
         self.set_tab_bar_position(next, cx);
     }
 
     pub(crate) fn toggle_left_panel(&mut self, cx: &mut Context<Self>) {
+        let tmux_style = cx.global::<Config>().tab_bar_style == TabBarStyle::Tmux;
+        // The rail is a standard-style thing. Asked for while the tmux line
+        // is up, it brings the rail and its style back together instead of
+        // switching to a position the tmux line cannot show.
+        if tmux_style {
+            self.sidebar_collapsed = false;
+            self.update_config(cx, |cfg| {
+                cfg.tab_bar_style = TabBarStyle::Standard;
+                cfg.tab_bar_position = TabBarPosition::Left;
+                cfg.sidebar_collapsed = false;
+            });
+            cx.notify();
+            return;
+        }
         let (pos, collapsed) = match cx.global::<Config>().tab_bar_position {
-            TabBarPosition::Top => (TabBarPosition::Left, false),
+            TabBarPosition::Top | TabBarPosition::Bottom => (TabBarPosition::Left, false),
             TabBarPosition::Left => (TabBarPosition::Left, !self.sidebar_collapsed),
         };
         self.sidebar_collapsed = collapsed;
@@ -4030,9 +4094,7 @@ impl Tty7App {
     }
 
     pub(crate) fn left_panel_open(&self, cx: &gpui::App) -> bool {
-        matches!(cx.global::<Config>().tab_bar_position, TabBarPosition::Left)
-            && !self.sidebar_collapsed
-            && !self.tabs.is_empty()
+        cx.global::<Config>().tabs_in_sidebar() && !self.sidebar_collapsed && !self.tabs.is_empty()
     }
 
     pub(crate) fn set_notify_mode(
@@ -5182,8 +5244,7 @@ impl Tty7App {
         let pointer = window.mouse_position();
         // The two surfaces never share a window: the sidebar *is* the tab bar
         // when it is up, and the strip is what stands in for it when it is not.
-        let vertical = matches!(cx.global::<Config>().tab_bar_position, TabBarPosition::Left)
-            && !self.tabs.is_empty();
+        let vertical = cx.global::<Config>().tabs_in_sidebar() && !self.tabs.is_empty();
         let viewport = window.viewport_size();
         let pad = gpui_component::window_paddings(window);
         // The band each surface claims, read off the tabs it drew rather than
@@ -5201,7 +5262,22 @@ impl Tty7App {
                 .map(|(_, b)| b.origin.x + b.size.width)
                 .reduce(Pixels::max)?;
             Some(match axis {
-                Axis::Horizontal => strip_band(viewport, pad),
+                // The horizontal strip is the top row, or the bottom one when
+                // `tab_bar_position` says so. A band left at the top would
+                // make every reorder drag aimed at the bottom bar land
+                // nowhere.
+                Axis::Horizontal => {
+                    let mut band = strip_band(viewport, pad);
+                    let style = cx.global::<Config>().tab_bar_style;
+                    band.size.height = px(cx.global::<Config>().tab_bar_height.clamp(
+                        crate::core::config::tab_bar_min_height(style),
+                        crate::core::config::TAB_BAR_HEIGHT_MAX,
+                    ));
+                    if cx.global::<Config>().tab_bar_at_bottom() {
+                        band.origin.y = viewport.height - pad.bottom - band.size.height;
+                    }
+                    band
+                }
                 Axis::Vertical => Bounds {
                     origin: point(left, top - px(BAND_REACH)),
                     size: size(
@@ -5414,6 +5490,15 @@ impl Tty7App {
         let run = self.tab_run(self.active, cx);
         if let Some(permutation) = one_slot_move(&run, self.tabs.len(), self.active, right) {
             self.apply_tab_order(&permutation, cx);
+        }
+    }
+
+    /// Jump straight back to the tab used before this one — xterm-muxer's
+    /// `Alt+m`. The active tab leads [`tabs_by_mru`](Self::tabs_by_mru), so
+    /// the second entry is the last one it replaced.
+    pub(crate) fn activate_last_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(&index) = self.tabs_by_mru().get(1) {
+            self.activate(index, window, cx);
         }
     }
 
@@ -6553,7 +6638,7 @@ impl Tty7App {
         // system picker, which browses this computer: a path picked there
         // names nothing on a remote workspace's machine, where "Pin as
         // Group" in the file tree is the way in instead.
-        if cx.global::<Config>().tab_bar_position == TabBarPosition::Left {
+        if cx.global::<Config>().tabs_in_sidebar() {
             actions.push(
                 Item::localized(L10nKey::CmdNewGroup, CommandKind::NewGroup)
                     .with_subtitle(t(L10nKey::CmdNewGroupSubtitle))
@@ -7248,6 +7333,8 @@ impl Tty7App {
             L10nKey::SettingsTabBarPosition => {
                 self.set_tab_bar_position(defaults.tab_bar_position, cx)
             }
+            L10nKey::SettingsTabBarStyle => self.set_tab_bar_style(defaults.tab_bar_style, cx),
+            L10nKey::SettingsTabBarHeight => self.set_tab_bar_height(defaults.tab_bar_height, cx),
             L10nKey::SettingsSidebarGrouping => {
                 self.set_sidebar_auto_grouping(defaults.sidebar_auto_grouping, cx)
             }
@@ -7334,6 +7421,9 @@ impl Tty7App {
             L10nKey::SettingsFontSize => self.reset_font_size(cx),
             L10nKey::SettingsUiFontSize => self.reset_ui_font_size(cx),
             L10nKey::SettingsLineHeight => self.reset_line_height(cx),
+            L10nKey::SettingsTerminalPadding => {
+                self.set_terminal_padding(defaults.terminal_padding, cx)
+            }
             L10nKey::SettingsFontFamily => {
                 self.commit_font_family(defaults.font_family.clone(), cx)
             }
@@ -8895,6 +8985,10 @@ impl Tty7App {
                         self.record_gen = self.record_gen.wrapping_add(1);
                     }
                     cx.notify();
+                } else if action == crate::ui::keymap::LEADER_RECORDING {
+                    // ⌫ on an empty leader row puts the shipped chord back.
+                    self.stop_recording(cx);
+                    self.set_keybinding_prefix("ctrl-b", cx);
                 } else {
                     self.stop_recording(cx);
                     self.unbind_keybinding(action, cx);
@@ -8940,6 +9034,15 @@ impl Tty7App {
             return;
         };
         self.stop_recording(cx);
+        // The leader is a prefix, not an action binding. Only its first
+        // chord means anything: the rest would be the sequence typed after
+        // it, which is not what this row is setting.
+        if action == crate::ui::keymap::LEADER_RECORDING {
+            if let Some(first) = chords.first() {
+                self.set_keybinding_prefix(first, cx);
+            }
+            return;
+        }
         let spec = chords.join(" ");
         // A chord another action answers to is not taken silently: the row
         // asks whether to take it over, and only Replace moves it.
@@ -9559,8 +9662,7 @@ impl Render for Tty7App {
         {
             cx.set_active_drag_cursor_style(held, window);
         }
-        let vertical = matches!(cx.global::<Config>().tab_bar_position, TabBarPosition::Left)
-            && !self.tabs.is_empty();
+        let vertical = cx.global::<Config>().tabs_in_sidebar() && !self.tabs.is_empty();
         // Asked through the predicate the right panel sizes itself against —
         // two spellings of "is the rail up" is one more than the layout can
         // afford to have disagree.
@@ -9585,7 +9687,62 @@ impl Render for Tty7App {
         // blank and write again.
         let tab_landing = self.tab_landing(window, cx);
         let detach_caret = self.detach_caret(window, cx);
-        let strip = self.tab_strip(!vertical, window, cx);
+        let tab_bar_style = cx.global::<Config>().tab_bar_style;
+        // A hand-edited config can ask for the tmux line on the left. It has
+        // no vertical form, so it is read as the top bar rather than dropped.
+        let tab_bar_position = match (tab_bar_style, cx.global::<Config>().tab_bar_position) {
+            (TabBarStyle::Tmux, TabBarPosition::Left) => TabBarPosition::Top,
+            (_, position) => position,
+        };
+        let tab_bar_at_bottom = cx.global::<Config>().tab_bar_at_bottom();
+        let configured_tab_bar_height = cx.global::<Config>().tab_bar_height.clamp(
+            crate::core::config::tab_bar_min_height(tab_bar_style),
+            crate::core::config::TAB_BAR_HEIGHT_MAX,
+        );
+        // The left rail owns its own width; this height is the horizontal
+        // bar's. The top row is still a full title bar when the tabs live in
+        // the rail or at the bottom — it carries the window chrome and the
+        // search box at the size every other title row uses.
+        let top_bar_height = match tab_bar_position {
+            // The OS-drawn window buttons need a caption's height. In
+            // fullscreen they are gone, so the tmux line may take the row
+            // down to a text row.
+            TabBarPosition::Top if window_controls_drawn(window.is_fullscreen()) => {
+                configured_tab_bar_height.max(crate::core::config::TAB_BAR_HEIGHT_MIN_STANDARD)
+            }
+            TabBarPosition::Top => configured_tab_bar_height,
+            _ => TITLE_BAR_HEIGHT,
+        };
+        let bottom_bar_height = match tab_bar_at_bottom {
+            true => configured_tab_bar_height,
+            false => TITLE_BAR_HEIGHT,
+        };
+        // Fullscreen drops the top status bar — the row carrying Search
+        // Everywhere and the window chrome — and nothing else. When the tabs
+        // live in that row they are what the user is looking at, so it stays;
+        // when they live in the rail or along the bottom it goes, leaving the
+        // terminal the whole window.
+        let hide_top_bar = !top_bar_shown(window.is_fullscreen(), tab_bar_position);
+        let tmux_horizontal = tab_bar_style == TabBarStyle::Tmux && !vertical;
+        // With the tabs along the bottom the top row is no longer the tab
+        // bar: it is the status bar again — Search Everywhere, the new-tab
+        // tile and the window chrome — and the tabs get a row of their own.
+        // That is also what makes "hide the top bar, keep the tabs" mean
+        // something in this layout.
+        let top_strip: Option<gpui::AnyElement> = if hide_top_bar {
+            None
+        } else if tab_bar_at_bottom {
+            Some(self.tab_strip(false, window, cx).into_any_element())
+        } else if tmux_horizontal {
+            Some(self.tab_strip_tmux(window, cx))
+        } else {
+            Some(self.tab_strip(!vertical, window, cx).into_any_element())
+        };
+        let bottom_strip: Option<gpui::AnyElement> =
+            tab_bar_at_bottom.then(|| match tmux_horizontal {
+                true => self.tab_strip_tmux(window, cx),
+                false => self.tab_strip(true, window, cx).into_any_element(),
+            });
         let sidebar = rail.then(|| self.tab_sidebar(window, cx));
         let ssh_status = self
             .tabs
@@ -9610,12 +9767,17 @@ impl Render for Tty7App {
                         .into_any_element(),
                     None => {
                         let several = active_tab.pane.leaves().len() > 1;
+                        let terminal_padding = cx.global::<Config>().terminal_padding;
                         let chrome = crate::ui::pane::PaneChrome {
                             dim_inactive: several && cx.global::<Config>().dim_inactive_panes,
                             rearrangeable: several,
                             hovered: self.pane_hover.clone(),
                             lifted: crate::ui::pane_drag::lifted(&self.pane_drag),
                             drag: self.pane_drag.clone(),
+                            grip_strip: match terminal_padding > 0. {
+                                true => crate::ui::pane_drag::HANDLE_STRIP,
+                                false => 0.,
+                            },
                         };
                         active_tab.pane.render(&chrome, window, cx)
                     }
@@ -9629,12 +9791,12 @@ impl Render for Tty7App {
         // always draws them, so the strip goes into a plain row of the same
         // geometry instead — the row itself stays, since it holds the tabs,
         // the chrome tiles and the docked document's header.
-        let title_bar =
+        let build_top_bar = |strip: gpui::AnyElement| -> gpui::AnyElement {
             if window_controls_drawn(window.is_fullscreen()) || cfg!(target_os = "macos") {
                 // `TitleBar` pads its own fixed 80pt; the lead is ours, since
                 // it follows where the traffic lights are put.
                 TitleBar::new()
-                    .h(px(TITLE_BAR_HEIGHT))
+                    .h(px(top_bar_height))
                     .pl(px(TITLE_BAR_LEAD))
                     .bg(cx.theme().transparent)
                     .border_color(cx.theme().transparent)
@@ -9647,6 +9809,7 @@ impl Render for Tty7App {
                     .flex_row()
                     .pl(px(TITLE_BAR_LEAD))
                     .title_strip_row(px(TITLE_BAR_BORDER), cx.theme().transparent)
+                    .h(px(top_bar_height))
                     .child(
                         div()
                             .flex()
@@ -9657,7 +9820,38 @@ impl Render for Tty7App {
                             .child(strip),
                     )
                     .into_any_element()
-            };
+            }
+        };
+        // The bottom bar is the same strip with its hairline on the other
+        // edge. No window controls: the platform draws those only in the
+        // caption, and a bottom row is not one.
+        let build_bottom_bar = |strip: gpui::AnyElement| -> gpui::AnyElement {
+            div()
+                .flex_shrink_0()
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .h(px(bottom_bar_height))
+                .border_t(px(TITLE_BAR_BORDER))
+                .border_color(cx.theme().sidebar_border)
+                .when(tab_bar_style == TabBarStyle::Tmux, |bar| {
+                    bar.bg(crate::ui::theme::rail_surface_color(cx))
+                })
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h_full()
+                        .flex_1()
+                        .min_w_0()
+                        .child(strip),
+                )
+                .into_any_element()
+        };
+        let title_bar = top_strip.map(build_top_bar);
+        let bottom_bar = bottom_strip.map(build_bottom_bar);
         let body_area = div()
             .flex_1()
             .relative()
@@ -9706,7 +9900,10 @@ impl Render for Tty7App {
         // spans the workspace and leaves the strip above the column empty, so
         // the header goes up into it; on macOS the column already reaches the
         // top of the window and its own first row lands there.
-        let document_chrome = if cfg!(target_os = "macos") {
+        let document_chrome = if cfg!(target_os = "macos") || title_bar.is_none() {
+            // The hoisted header borrows the top bar's empty trailing end.
+            // With the tabs along the bottom, or with the top bar put away in
+            // fullscreen, there is no such row, so the column draws its own.
             crate::ui::document_column::DocumentChrome::Dock
         } else {
             crate::ui::document_column::DocumentChrome::DockHoisted
@@ -9762,9 +9959,9 @@ impl Render for Tty7App {
         let panel_below_title_bar =
             (right_panel.is_some() || document_column.is_some()) && !cfg!(target_os = "macos");
         let (column_title_bar, spanning_title_bar) = if panel_below_title_bar {
-            (None, Some(title_bar))
+            (None, title_bar)
         } else {
-            (Some(title_bar), None)
+            (title_bar, None)
         };
         let (column_overlays, hoisted_overlays) = if panel_below_title_bar {
             (Vec::new(), overlays)
@@ -9856,7 +10053,7 @@ impl Render for Tty7App {
                                     div()
                                         .absolute()
                                         .top_0()
-                                        .h(px(TITLE_BAR_HEIGHT))
+                                        .h(px(top_bar_height))
                                         .right(px(panel_px))
                                         .w(px(document_px))
                                         .when(panel_px <= 0., |d| {
@@ -9869,6 +10066,10 @@ impl Render for Tty7App {
                             }),
                     )
                     .child(panel_row)
+                    // Under the whole row, so the bar spans the document and
+                    // the detail panel too, the way tmux's status line spans
+                    // its client.
+                    .children(bottom_bar)
                     .children(hoisted_overlays.into_iter().map(|overlay| {
                         div()
                             .absolute()
@@ -9879,7 +10080,15 @@ impl Render for Tty7App {
                             .child(overlay)
                     }))
                     .into_any_element(),
-                None => panel_row.into_any_element(),
+                None => div()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(panel_row)
+                    .children(bottom_bar)
+                    .into_any_element(),
             })
             .into_any_element();
 
@@ -10015,6 +10224,9 @@ impl Render for Tty7App {
                 .on_action(
                     cx.listener(|this, _: &PrevTab, window, cx| this.tab_switch(false, window, cx)),
                 )
+                .on_action(cx.listener(|this, _: &ActivateLastTab, window, cx| {
+                    this.activate_last_tab(window, cx)
+                }))
                 .on_action(cx.listener(|this, _: &SelectNextTab, window, cx| {
                     this.cycle_tab(true, window, cx)
                 }))
@@ -11881,6 +12093,21 @@ mod tests {
         assert_eq!(band.size.height, px(TITLE_BAR_HEIGHT));
     }
 
+    /// Fullscreen puts away the top status bar, but never the row the tabs
+    /// are in: a mode that hides the thing you switch with is not immersive,
+    /// it is stuck.
+    #[test]
+    fn fullscreen_hides_the_status_bar_but_keeps_the_tabs() {
+        use crate::core::config::TabBarPosition;
+        assert!(super::top_bar_shown(false, TabBarPosition::Left));
+        assert!(super::top_bar_shown(false, TabBarPosition::Bottom));
+        assert!(super::top_bar_shown(false, TabBarPosition::Top));
+
+        assert!(!super::top_bar_shown(true, TabBarPosition::Left));
+        assert!(!super::top_bar_shown(true, TabBarPosition::Bottom));
+        assert!(super::top_bar_shown(true, TabBarPosition::Top));
+    }
+
     /// Fullscreen takes the window buttons and nothing else: the strip keeps
     /// its row, and the room reserved for the buttons at its end comes back.
     /// macOS never had any to take.
@@ -13136,6 +13363,38 @@ mod keybinding_gpui_tests {
             Some(false),
             "capture should end after committing"
         );
+    }
+
+    #[gpui::test]
+    fn recording_the_leader_writes_prefix_and_not_a_keybinding(cx: &mut TestAppContext) {
+        let (app, mut vcx) = harness(cx);
+        begin_capture(&app, &mut vcx, crate::ui::keymap::LEADER_RECORDING);
+        vcx.simulate_keystrokes("alt-shift-k");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            vcx.background_executor.run_until_parked();
+            let (prefix, sentinel) = vcx.update(|_, cx| {
+                let cfg = cx.global::<Config>();
+                (
+                    cfg.prefix.clone(),
+                    cfg.keybindings
+                        .contains_key(crate::ui::keymap::LEADER_RECORDING),
+                )
+            });
+            if prefix == "alt-shift-k" {
+                assert!(
+                    !sentinel,
+                    "the recorder must not write its sentinel into keybindings"
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "recording the leader never wrote prefix (still {prefix:?})"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 
     #[gpui::test]

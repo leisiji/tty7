@@ -148,6 +148,11 @@ pub struct Config {
     pub font_thicken: bool,
     pub font_size: f32,
     pub line_height: f32,
+    /// Space around the terminal grid, in logical pixels. The vertical half
+    /// is this value's half, as the grid has always used less air above and
+    /// below than beside it. Zero is the fullscreen/fill setting.
+    #[serde(default = "default_terminal_padding")]
+    pub terminal_padding: f32,
     /// The interface's root font size, in pixels — everything outside the
     /// terminal grid is sized against it.
     ///
@@ -198,7 +203,11 @@ pub struct Config {
     pub keybindings: HashMap<String, KeybindingOverride>,
     #[serde(default = "default_preset")]
     pub keybinding_preset: String,
-    #[serde(default = "default_prefix")]
+    /// The tmux preset's leader (the multiplexer calls it the prefix). A
+    /// hand-written file may call it `leader`; the settings page and every
+    /// save still write `prefix`, so the old spelling keeps working in both
+    /// directions.
+    #[serde(default = "default_prefix", alias = "leader")]
     pub prefix: String,
     #[serde(default, deserialize_with = "de_shell")]
     pub shell: Option<ShellConfig>,
@@ -223,6 +232,12 @@ pub struct Config {
     pub new_tab_position: NewTabPosition,
     #[serde(default, deserialize_with = "de_lenient")]
     pub tab_bar_position: TabBarPosition,
+    #[serde(default, deserialize_with = "de_lenient")]
+    pub tab_bar_style: TabBarStyle,
+    /// Height of the horizontal tab bar, in logical pixels, when the tabs
+    /// are along the top or the bottom. The left rail has its own width.
+    #[serde(default = "default_tab_bar_height")]
+    pub tab_bar_height: f32,
     #[serde(default = "default_sidebar_width")]
     pub sidebar_width: f32,
     #[serde(default)]
@@ -614,8 +629,25 @@ pub enum NewTabPosition {
 #[serde(rename_all = "kebab-case")]
 pub enum TabBarPosition {
     Top,
+    Bottom,
     #[default]
     Left,
+}
+
+/// How the tabs are drawn.
+///
+/// `Standard` is the app's own: rounded chips along the top/bottom or the
+/// rich rows in the left rail. `Tmux` is the terminal-multiplexer's window
+/// line — one row of `1:title` segments, at the top or the bottom, with no
+/// sidebar. It is a presentation choice only; clicking a segment still does
+/// everything a chip does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TabBarStyle {
+    #[default]
+    #[serde(rename = "default")]
+    Standard,
+    Tmux,
 }
 
 /// Native window backdrop material for the Windows GUI. Other platforms retain
@@ -793,6 +825,7 @@ impl Default for Config {
             font_thicken: true,
             font_size: 15.0,
             line_height: 1.4,
+            terminal_padding: default_terminal_padding(),
             ui_font_size: default_ui_font_size(),
             ui_font_family: None,
             theme: "light".to_string(),
@@ -819,6 +852,8 @@ impl Default for Config {
             scrollback_limit: 10_000,
             new_tab_position: NewTabPosition::AfterCurrent,
             tab_bar_position: TabBarPosition::Left,
+            tab_bar_style: TabBarStyle::Standard,
+            tab_bar_height: default_tab_bar_height(),
             sidebar_width: default_sidebar_width(),
             sidebar_collapsed: false,
             right_panel_visible: false,
@@ -920,6 +955,18 @@ impl LoadOutcome {
 }
 
 impl Config {
+    /// Whether the tabs are drawn in the left rail. A tmux-style bar is
+    /// horizontal by definition, so a `Left` position under that style falls
+    /// back to the top rather than growing a second flavour of sidebar.
+    pub fn tabs_in_sidebar(&self) -> bool {
+        self.tab_bar_position == TabBarPosition::Left && self.tab_bar_style == TabBarStyle::Standard
+    }
+
+    /// Whether the horizontal tab bar belongs at the bottom of the window.
+    pub fn tab_bar_at_bottom(&self) -> bool {
+        self.tab_bar_position == TabBarPosition::Bottom
+    }
+
     pub fn load() -> Self {
         Self::load_with_outcome().0
     }
@@ -1087,6 +1134,16 @@ impl Config {
             self.line_height = Config::default().line_height;
         }
         self.line_height = self.line_height.clamp(LINE_HEIGHT_MIN, LINE_HEIGHT_MAX);
+        if !self.terminal_padding.is_finite() {
+            self.terminal_padding = default_terminal_padding();
+        }
+        self.terminal_padding = self.terminal_padding.clamp(0.0, TERMINAL_PADDING_MAX);
+        if !self.tab_bar_height.is_finite() {
+            self.tab_bar_height = default_tab_bar_height();
+        }
+        self.tab_bar_height = self
+            .tab_bar_height
+            .clamp(tab_bar_min_height(self.tab_bar_style), TAB_BAR_HEIGHT_MAX);
         if !self.ui_font_size.is_finite() || self.ui_font_size <= 0.0 {
             self.ui_font_size = default_ui_font_size();
         }
@@ -1674,6 +1731,32 @@ pub const FONT_SIZE_MIN: f32 = 4.0;
 pub const FONT_SIZE_MAX: f32 = 256.0;
 pub const LINE_HEIGHT_MIN: f32 = 0.5;
 pub const LINE_HEIGHT_MAX: f32 = 4.0;
+/// The terminal's grid padding: horizontal first, vertical half of it.
+pub const TERMINAL_PADDING_DEFAULT: f32 = 8.0;
+pub const TERMINAL_PADDING_MAX: f32 = 32.0;
+pub const TAB_BAR_HEIGHT_DEFAULT: f32 = 48.0;
+/// The classic chips are 30 px tall, so the bar has to clear them.
+pub const TAB_BAR_HEIGHT_MIN_STANDARD: f32 = 32.0;
+/// The tmux line is text, and tmux itself draws it at one text row's height.
+/// Sixteen leaves room for the 12 px label plus its rule.
+pub const TAB_BAR_HEIGHT_MIN_TMUX: f32 = 16.0;
+pub const TAB_BAR_HEIGHT_MAX: f32 = 72.0;
+
+/// The shortest the horizontal bar may be drawn in `style`.
+pub fn tab_bar_min_height(style: TabBarStyle) -> f32 {
+    match style {
+        TabBarStyle::Standard => TAB_BAR_HEIGHT_MIN_STANDARD,
+        TabBarStyle::Tmux => TAB_BAR_HEIGHT_MIN_TMUX,
+    }
+}
+
+fn default_terminal_padding() -> f32 {
+    TERMINAL_PADDING_DEFAULT
+}
+
+fn default_tab_bar_height() -> f32 {
+    TAB_BAR_HEIGHT_DEFAULT
+}
 
 fn default_ui_font_size() -> f32 {
     UI_FONT_SIZE_DEFAULT
@@ -2274,13 +2357,14 @@ mod tests {
     #[test]
     fn behavior_enums_fall_back_leniently_on_bad_values() {
         let cfg: Config = serde_json::from_str(
-            r#"{"font_size": 20.0, "new_tab_position": "middle", "notify_on_command_finish": "sometimes", "tab_bar_position": "diagonal"}"#,
+            r#"{"font_size": 20.0, "new_tab_position": "middle", "notify_on_command_finish": "sometimes", "tab_bar_position": "diagonal", "tab_bar_style": "zigzag"}"#,
         )
         .expect("a bad enum value must not fail the whole parse");
         assert_eq!(cfg.font_size, 20.0);
         assert_eq!(cfg.new_tab_position, NewTabPosition::AfterCurrent);
         assert_eq!(cfg.notify_on_command_finish, NotifyMode::Unfocused);
         assert_eq!(cfg.tab_bar_position, TabBarPosition::Left);
+        assert_eq!(cfg.tab_bar_style, TabBarStyle::Standard);
 
         let cfg: Config = serde_json::from_str(
             r#"{"new_tab_position": "end", "notify_on_command_finish": "always", "tab_bar_position": "top"}"#,
@@ -2289,6 +2373,29 @@ mod tests {
         assert_eq!(cfg.new_tab_position, NewTabPosition::End);
         assert_eq!(cfg.notify_on_command_finish, NotifyMode::Always);
         assert_eq!(cfg.tab_bar_position, TabBarPosition::Top);
+
+        let cfg: Config =
+            serde_json::from_str(r#"{"tab_bar_position": "bottom", "tab_bar_style": "tmux"}"#)
+                .unwrap();
+        assert_eq!(cfg.tab_bar_position, TabBarPosition::Bottom);
+        assert_eq!(cfg.tab_bar_style, TabBarStyle::Tmux);
+    }
+
+    #[test]
+    fn only_the_classic_left_position_is_a_sidebar() {
+        let mut cfg = Config::default();
+        assert!(cfg.tabs_in_sidebar());
+
+        cfg.tab_bar_position = TabBarPosition::Top;
+        assert!(!cfg.tabs_in_sidebar());
+        cfg.tab_bar_position = TabBarPosition::Bottom;
+        assert!(!cfg.tabs_in_sidebar());
+
+        // The tmux line is horizontal even when a hand-edited file asks for
+        // the left: there is no vertical flavour of it to draw.
+        cfg.tab_bar_position = TabBarPosition::Left;
+        cfg.tab_bar_style = TabBarStyle::Tmux;
+        assert!(!cfg.tabs_in_sidebar());
     }
 
     #[test]
@@ -2549,6 +2656,16 @@ mod tests {
             serde_json::from_str(r#"{"keybinding_preset": "tmux", "prefix": "ctrl-a"}"#).unwrap();
         assert_eq!(cfg.keybinding_preset, "tmux");
         assert_eq!(cfg.prefix, "ctrl-a");
+
+        // `leader` is the readable spelling of the same setting, and reads
+        // into the field every save writes back under its older name.
+        let cfg: Config = serde_json::from_str(r#"{"leader": "ctrl-space"}"#).unwrap();
+        assert_eq!(cfg.prefix, "ctrl-space");
+        assert_eq!(
+            serde_json::to_value(&cfg).unwrap()["prefix"].as_str(),
+            Some("ctrl-space")
+        );
+        assert!(serde_json::to_value(&cfg).unwrap().get("leader").is_none());
     }
 
     #[test]
