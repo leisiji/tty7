@@ -4244,6 +4244,21 @@ impl Tty7App {
 
     pub(crate) fn focus_active(&self, window: &mut Window, cx: &mut App) {
         self.sync_window_title(window, cx);
+        // A keyboard focus change lands where the reader was working, not
+        // where the pointer is. The pane that was on screen followed every
+        // pointer move, but the tab arriving from the background — and any
+        // sibling an un-zoom brings back — saw none of them while it was
+        // away. Tell the tab's panes where the pointer is now, so the next
+        // event at that unchanged position reads as no travel and cannot
+        // pull the keyboard off the pane focus just landed in.
+        if cx.global::<Config>().focus_follows_mouse
+            && let Some(tab) = self.tabs.get(self.active)
+        {
+            let at = window.mouse_position();
+            for leaf in tab.pane.terminals() {
+                leaf.update(cx, |view, _| view.note_pointer_seen(at));
+            }
+        }
         // Only where the page is drawn: with settings in a window of its own,
         // its handle focused in the workspace window is focus on nothing
         // there, and every shortcut in the workspace goes dead.
@@ -13058,6 +13073,101 @@ mod cursor_blink_gpui_tests {
             assert!(
                 right.read(cx).cursor_visible,
                 "the unfocused cursor must keep a steady phase"
+            );
+        });
+    }
+}
+
+/// Focus-follows-mouse is anchored on pointer travel: the keyboard moves only
+/// when the pointer has actually gone somewhere. A pane that was off screen
+/// knows nothing about the moves it missed, so without help it reads the
+/// platform's repeat of the position it already reported as travel.
+#[cfg(test)]
+mod focus_follows_mouse_gpui_tests {
+    use super::test_window::harness;
+    use crate::core::config::Config;
+    use crate::terminal::view::quiet_test_pane;
+    use crate::ui::pane::{Pane, PaneSlot};
+    use gpui::{Axis, Modifiers, TestAppContext, point, px};
+
+    #[gpui::test]
+    fn a_tab_switch_keeps_focus_off_a_still_pointer(cx: &mut TestAppContext) {
+        let (app, mut vcx) = harness(cx);
+        vcx.update(|_, cx| {
+            let mut cfg = cx.global::<Config>().clone();
+            cfg.focus_follows_mouse = true;
+            cfg.cursor_blink = false;
+            cx.set_global(cfg);
+        });
+
+        // Tab 0 is one pane; tab 1 is a split, so its remembered pane and the
+        // pane under the pointer can disagree after the switch.
+        let (left, right, _streams) = app.update_in(&mut vcx, |app, window, cx| {
+            let (only, only_stream) = quiet_test_pane(1, window, cx);
+            app.tabs
+                .push(super::Tab::new(Pane::leaf(PaneSlot::Ready(only))));
+            let (left, left_stream) = quiet_test_pane(2, window, cx);
+            let (right, right_stream) = quiet_test_pane(3, window, cx);
+            app.tabs.push(super::Tab::new(Pane::split_node(
+                Axis::Horizontal,
+                0.5,
+                Pane::leaf(PaneSlot::Ready(left.clone())),
+                Pane::leaf(PaneSlot::Ready(right.clone())),
+            )));
+            app.active = 0;
+            cx.notify();
+            (left, right, (only_stream, left_stream, right_stream))
+        });
+        vcx.update(|window, _| window.refresh());
+        vcx.run_until_parked();
+
+        let area = app.update(&mut vcx, |app, _| {
+            app.pane_area.get().expect("the body was drawn")
+        });
+        // The middle of the split's right half: clear of the divider, the
+        // grid padding and the tab strip.
+        let over_right = point(
+            area.origin.x + area.size.width * 0.75,
+            area.origin.y + area.size.height * 0.5,
+        );
+
+        // A real move while tab 0 shows: this one may follow.
+        vcx.simulate_mouse_move(over_right, None, Modifiers::none());
+        vcx.run_until_parked();
+
+        // Keyboard switch. Focus lands in the split's first (left) pane,
+        // which is where the tab's reader was working.
+        app.update_in(&mut vcx, |app, window, cx| app.activate(1, window, cx));
+        vcx.update(|window, _| window.refresh());
+        vcx.run_until_parked();
+        app.update_in(&mut vcx, |_, window, cx| {
+            assert!(left.read(cx).focus_handle.is_focused(window));
+        });
+
+        // The platform repeats the position it already reported. The pointer
+        // has not travelled, so the right pane must not take the keyboard.
+        vcx.simulate_mouse_move(over_right, None, Modifiers::none());
+        vcx.run_until_parked();
+        app.update_in(&mut vcx, |_, window, cx| {
+            assert!(
+                left.read(cx).focus_handle.is_focused(window),
+                "a still pointer must not move the keyboard after a tab switch"
+            );
+            assert!(!right.read(cx).focus_handle.is_focused(window));
+        });
+
+        // Travel after the switch is still travel: only the repeat at the
+        // position focus landed on is ignored.
+        vcx.simulate_mouse_move(
+            point(over_right.x + px(4.), over_right.y),
+            None,
+            Modifiers::none(),
+        );
+        vcx.run_until_parked();
+        app.update_in(&mut vcx, |_, window, cx| {
+            assert!(
+                right.read(cx).focus_handle.is_focused(window),
+                "a pointer that has actually moved may still move the keyboard"
             );
         });
     }

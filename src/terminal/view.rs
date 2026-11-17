@@ -405,6 +405,10 @@ pub struct TerminalView {
     /// actually travelled. A keyboard pane switch (Alt+P) leaves the pointer
     /// over the pane it was on, and a synthetic move at the same position —
     /// a scroll, a layout pass, a window event — must not drag focus back.
+    /// A pane that was off screen (the tab being switched to, a sibling an
+    /// un-zoom brings back) missed every move while it was away, so its
+    /// memory is stale or empty; [`Self::note_pointer_seen`] is how such a
+    /// pane is told where the pointer already is.
     pub(super) last_pointer_pos: Option<gpui::Point<Pixels>>,
     link_modifier_down: bool,
     /// What this pane's host has said about paths printed in it, for panes
@@ -2360,6 +2364,19 @@ impl TerminalView {
         self.agent_result_unread = true;
         self.keep_unread_on_focus = refocus_incoming;
         self.note_agent_result_unread(cx);
+    }
+
+    /// Record `at` as the pointer position this pane has already seen.
+    ///
+    /// A pane that was off screen — the one a keyboard focus change lands in,
+    /// a sibling an un-zoom brings back — saw none of the pointer's moves
+    /// while it was away. Without this its last-seen position is stale or
+    /// empty, and the platform repeating the position it already reported
+    /// would read as travel and pull the keyboard to whatever pane is under
+    /// the still pointer. Seeding at the moment focus lands keeps the keyboard
+    /// where it was put until the pointer genuinely moves.
+    pub(crate) fn note_pointer_seen(&mut self, at: gpui::Point<Pixels>) {
+        self.last_pointer_pos = Some(at);
     }
 
     /// Leave what the reader has seen of this pane's agent where the pane's
